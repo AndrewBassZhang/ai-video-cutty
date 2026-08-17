@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest an improvement to MediaPreview.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not disclose security vulnerabilities here; report them privately to the maintainers."
+  - type: dropdown
+    id: media-type
+    attributes:
+      label: Media type
+      options:
+        - Video
+        - Audio
+        - Image
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version, if relevant
+      placeholder: "e.g. macOS 14.6"
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

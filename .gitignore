@@ -1,0 +1,33 @@
+# Swift and application build products
+/.build/
+/build/
+/dist/
+
+# Packaged macOS application artifacts
+*.app/
+*.dmg
+*.pkg
+*.xcarchive/
+
+# Generated manuals, temporary artifacts, and local QA evidence
+Docs/使用说明.pdf
+Scripts/build_manual_pdf.py
+/tmp/
+/evidence/
+/qa/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Local editor and user state
+.idea/
+.vscode/
+xcuserdata/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+
+# macOS Finder metadata
+.DS_Store

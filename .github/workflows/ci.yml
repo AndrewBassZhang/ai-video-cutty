@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       # Pinned v4 maintenance branch commit; Dependabot tracks action updates.

@@ -1,6 +1,6 @@
 import AppKit
 import AVKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import ImageIO
 import UniformTypeIdentifiers
 

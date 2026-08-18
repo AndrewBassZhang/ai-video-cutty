@@ -40,6 +40,15 @@ final class MediaPreviewTests: XCTestCase {
         return nil
     }
 
+    @MainActor
+    private func identifier(_ value: String, in view: NSView) -> NSView? {
+        if view.identifier?.rawValue == value { return view }
+        for subview in view.subviews {
+            if let match = identifier(value, in: subview) { return match }
+        }
+        return nil
+    }
+
     func testLaunchInputParsesFilesystemPath() {
         XCTAssertEqual(
             LaunchInput.mediaURL(from: ["MediaPreview", "/tmp/example movie.mp4"]),
@@ -147,6 +156,74 @@ final class MediaPreviewTests: XCTestCase {
 
         XCTAssertEqual(player.frame.width, 1_278, accuracy: 0.001)
         XCTAssertEqual(player.frame.midX, root.bounds.midX, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testVideoLayoutKeepsHeaderCompactAndExpandsCenteredViewportAtLargeSizes() throws {
+        let contentSizes = [
+            CGSize(width: 1_306, height: 700),
+            CGSize(width: 1_920, height: 1_080)
+        ]
+        var headerHeights: [CGFloat] = []
+        var mediaSizes: [CGSize] = []
+        var surfaceSizes: [CGSize] = []
+
+        for contentSize in contentSizes {
+            let controller = PreviewController(url: URL(fileURLWithPath: "/tmp/example.mp4"), mediaKind: .video)
+            controller.loadViewIfNeeded()
+            controller.view.frame = NSRect(origin: .zero, size: contentSize)
+
+            controller.setMetadataRows(
+                ["1920×1080 · H.264 · 24 fps"],
+                ["00:00:12 · 48 Mbps"]
+            )
+            controller.view.layoutSubtreeIfNeeded()
+
+            let root = try XCTUnwrap(identifier("preview-root", in: controller.view))
+            let metadataStack = try XCTUnwrap(identifier("preview-metadata-stack", in: controller.view) as? NSStackView)
+            let mediaRow = try XCTUnwrap(identifier("preview-media-row", in: controller.view) as? NSStackView)
+            let surface = try XCTUnwrap(firstDescendant(of: ZoomablePlayerSurface.self, in: controller.view))
+            let playerView = try XCTUnwrap(firstDescendant(of: AVPlayerView.self, in: surface))
+            let timeline = try XCTUnwrap(firstDescendant(of: TimelineView.self, in: controller.view))
+            let volume = try XCTUnwrap(firstDescendant(of: VerticalVolumeControl.self, in: controller.view))
+            let mute = try XCTUnwrap(button(titled: "静音", in: controller.view))
+            let rotate = try XCTUnwrap(button(titled: "逆90°", in: controller.view))
+            let speed = try XCTUnwrap(button(titled: "8×", in: controller.view))
+
+            let rootFrame = root.convert(root.bounds, to: controller.view)
+            let headerFrame = metadataStack.convert(metadataStack.bounds, to: controller.view)
+            let mediaFrame = mediaRow.convert(mediaRow.bounds, to: controller.view)
+            let surfaceFrame = surface.convert(surface.bounds, to: controller.view)
+            let timelineFrame = timeline.convert(timeline.bounds, to: controller.view)
+
+            XCTAssertEqual(rootFrame.width, contentSize.width, accuracy: 0.5)
+            XCTAssertEqual(rootFrame.height, contentSize.height, accuracy: 0.5)
+            XCTAssertLessThanOrEqual(headerFrame.height, metadataStack.fittingSize.height + 0.5, "Metadata may use only its intrinsic two-row height")
+            XCTAssertLessThan(headerFrame.height, 50, "The header must not absorb maximized-window height")
+            XCTAssertEqual(headerFrame.maxY, rootFrame.maxY - 12, accuracy: 0.5)
+            XCTAssertEqual(surfaceFrame.minY, mediaFrame.minY, accuracy: 0.5)
+            XCTAssertEqual(surfaceFrame.maxY, mediaFrame.maxY, accuracy: 0.5)
+            XCTAssertEqual(playerView.frame.midX, surface.bounds.midX, accuracy: 0.5)
+            XCTAssertEqual(playerView.frame.midY, surface.bounds.midY, accuracy: 0.5)
+            XCTAssertEqual(playerView.videoGravity, .resizeAspect)
+            XCTAssertEqual(timelineFrame.height, 76, accuracy: 0.5)
+            XCTAssertGreaterThanOrEqual(timelineFrame.minY, rootFrame.minY + 11.5)
+            XCTAssertLessThan(timelineFrame.maxY, mediaFrame.minY)
+
+            for control in [volume, mute, rotate, speed] {
+                let point = control.convert(NSPoint(x: control.bounds.midX, y: control.bounds.midY), to: controller.view)
+                XCTAssertTrue(controller.view.hitTest(point) === control, "\(String(describing: control)) must remain hit-testable")
+            }
+
+            headerHeights.append(headerFrame.height)
+            mediaSizes.append(mediaFrame.size)
+            surfaceSizes.append(surfaceFrame.size)
+        }
+
+        XCTAssertEqual(headerHeights[1], headerHeights[0], accuracy: 0.5)
+        XCTAssertGreaterThan(mediaSizes[1].height, mediaSizes[0].height)
+        XCTAssertGreaterThan(surfaceSizes[1].width, surfaceSizes[0].width)
+        XCTAssertGreaterThan(surfaceSizes[1].height, surfaceSizes[0].height)
     }
 
     @MainActor

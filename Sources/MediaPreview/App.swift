@@ -1574,7 +1574,7 @@ private final class ImageCompressionSavePanelAccessory: NSObject, NSTextFieldDel
 final class PreviewController: NSViewController {
     private let url: URL; private let mediaKind: MediaKind; private let metadataInspector: MediaMetadataInspector?; private let player = AVPlayer(); private let videoSurface = ZoomablePlayerSurface(); private var playerView: AVPlayerView { videoSurface.playerView }; private let imageSurface = ZoomableImageSurface(); private var imageView: NSImageView { imageSurface.imageView }
     private let metadataStack = NSStackView()
-    private let row1 = NSStackView(); private let row2 = NSStackView(); private let mediaRow = NSStackView(); private let volumeStack = NSStackView(); private let displayTransformStack = NSStackView(); private let rotateCounterclockwiseButton = NSButton(); private let rotateClockwiseButton = NSButton(); private let mirrorButton = NSButton(); private let videoScreenshotButton = NSButton(); private let imageActionStack = NSStackView(); private let imageCropSaveButton = NSButton(); private let imageJPEGConversionButton = NSButton(); private let imageJPEGCompressionButton = NSButton(); private let speedStack = NSStackView(); private let timeline = TimelineView(); private let timeLabel = NSTextField(labelWithString: ""); private let loopButton = NSButton(); private let trimExportButton = NSButton(); private let audioExportButton = NSButton(); private let trimExportStatus = NSTextField(labelWithString: ""); private let trimExportProgress = NSProgressIndicator(); private let cancelExportButton = NSButton(); private let muteButton = NSButton(); private let volumeControl = VerticalVolumeControl(); private let topActionStack = NSStackView(); private let filenameLabel = NSTextField(wrappingLabelWithString: "")
+    private let row1 = NSStackView(); private let row2 = NSStackView(); private let mediaRow = NSStackView(); private let leftControlRail = NSStackView(); private let rightControlRail = NSStackView(); private let volumeStack = NSStackView(); private let displayTransformStack = NSStackView(); private let rotateCounterclockwiseButton = NSButton(); private let rotateClockwiseButton = NSButton(); private let mirrorButton = NSButton(); private let videoScreenshotButton = NSButton(); private let imageActionStack = NSStackView(); private let imageCropSaveButton = NSButton(); private let imageJPEGConversionButton = NSButton(); private let imageJPEGCompressionButton = NSButton(); private let speedStack = NSStackView(); private let timeline = TimelineView(); private let timeLabel = NSTextField(labelWithString: ""); private let loopButton = NSButton(); private let trimExportButton = NSButton(); private let audioExportButton = NSButton(); private let trimExportStatus = NSTextField(labelWithString: ""); private let trimExportProgress = NSProgressIndicator(); private let cancelExportButton = NSButton(); private let muteButton = NSButton(); private let volumeControl = VerticalVolumeControl(); private let topActionStack = NSStackView(); private let filenameLabel = NSTextField(wrappingLabelWithString: "")
     private var imageGenerator: AVAssetImageGenerator?; private var cropPreviewGenerator: AVAssetImageGenerator?; private var cropPreviewGenerationID = 0; private var cropPreviewCompletion: ((NSImage?) -> Void)?; private var videoScreenshotGenerator: AVAssetImageGenerator?; private var videoScreenshotGenerationID = 0; private var videoScreenshotCommitToken: VideoFrameScreenshotCommitToken?; private var videoScreenshotCaptureGate = VideoFrameScreenshotCaptureGate(); private var timeObserver: Any?; private var endObserver: NSObjectProtocol?; private var hoverWorkItem: DispatchWorkItem?; private var waveformExtraction: WaveformExtraction?
     private var hoverActive = false; private var hoverRate: Float = 0; private var oldMuted = false; private var chosenForwardRate: Float = 1; private var shuttleRate: Float = 0; private var plainArrowShuttleKeyCode: UInt16?; private var plainArrowRestoreRate: Float?; private var lastAudibleVolume: Float = 1; private var videoDisplayTransform = VideoDisplayTransform(); private var imageDisplayTransform = VideoDisplayTransform()
     private var markers = ABMarkerState(); private var loopEnabled: Bool; private var loopSeekCoordinator = ABLoopExactSeekCoordinator()
@@ -1691,15 +1691,12 @@ final class PreviewController: NSViewController {
         videoSurface.setContentHuggingPriority(.defaultLow, for: .horizontal); videoSurface.setContentCompressionResistancePriority(.defaultLow, for: .horizontal); videoSurface.setContentHuggingPriority(.defaultLow, for: .vertical); videoSurface.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         videoSurface.onSingleClick = { [weak self] in self?.handle(.togglePlayback) }
         videoSurface.heightAnchor.constraint(greaterThanOrEqualToConstant: 430).isActive = true
+        configureVideoControlRails()
         configureVolumeStack()
-        mediaRow.addArrangedSubview(volumeStack)
-        mediaRow.addArrangedSubview(videoSurface)
+        leftControlRail.addArrangedSubview(volumeStack)
         if mediaKind == .video {
             configureDisplayTransformStack()
-            // Insert at the arranged position immediately after the volume bar,
-            // but add it after the canvas so it remains the upper hit-test view
-            // if the canvas extends into an adjacent column.
-            mediaRow.insertArrangedSubview(displayTransformStack, at: 1)
+            leftControlRail.addArrangedSubview(displayTransformStack)
         }
         speedStack.orientation = .vertical; speedStack.alignment = .centerX; speedStack.spacing = 3; speedStack.distribution = .fill
         for (index, rate) in PlaybackMath.speedOrder.enumerated() {
@@ -1707,7 +1704,6 @@ final class PreviewController: NSViewController {
             button.tag = index; configureTransportButton(button, title: speedTitle(rate), action: #selector(selectSpeed(_:)))
             speedStack.addArrangedSubview(button); speedButtons.append(button)
         }
-        speedStack.widthAnchor.constraint(equalToConstant: 82).isActive = true
         configureTransportButton(loopButton, title: "循环", action: #selector(toggleLoop(_:))); speedStack.addArrangedSubview(loopButton)
         speedStack.addArrangedSubview(transportButton(title: "清除 A-B", action: #selector(clearAB(_:))))
         configureTransportButton(trimExportButton, title: "裁切导出…", action: #selector(beginTrimExport(_:)), width: 96); trimExportButton.isEnabled = false; speedStack.addArrangedSubview(trimExportButton)
@@ -1715,7 +1711,15 @@ final class PreviewController: NSViewController {
         trimExportProgress.isIndeterminate = false; trimExportProgress.minValue = 0; trimExportProgress.maxValue = 100; trimExportProgress.doubleValue = 0; trimExportProgress.controlSize = .small; trimExportProgress.isHidden = true; trimExportProgress.widthAnchor.constraint(equalToConstant: 96).isActive = true; trimExportProgress.heightAnchor.constraint(equalToConstant: 8).isActive = true; speedStack.addArrangedSubview(trimExportProgress)
         trimExportStatus.alignment = .center; trimExportStatus.font = .systemFont(ofSize: 10); trimExportStatus.textColor = .secondaryLabelColor; trimExportStatus.lineBreakMode = .byTruncatingMiddle; trimExportStatus.widthAnchor.constraint(equalToConstant: 96).isActive = true; speedStack.addArrangedSubview(trimExportStatus)
         configureTransportButton(cancelExportButton, title: "取消导出", action: #selector(cancelExport(_:)), width: 96); cancelExportButton.isHidden = true; speedStack.addArrangedSubview(cancelExportButton)
-        mediaRow.addArrangedSubview(speedStack); root.addArrangedSubview(mediaRow)
+        rightControlRail.addArrangedSubview(speedStack)
+        mediaRow.addArrangedSubview(leftControlRail)
+        mediaRow.addArrangedSubview(videoSurface)
+        mediaRow.addArrangedSubview(rightControlRail)
+        root.addArrangedSubview(mediaRow)
+        // Equal-width outer rails make the viewport's center independent from
+        // the different controls each rail contains. With the row's equal
+        // inter-item spacing, the surface is therefore centered geometrically.
+        leftControlRail.widthAnchor.constraint(equalTo: rightControlRail.widthAnchor).isActive = true
         if mediaKind == .video {
             NSLayoutConstraint.activate([
                 videoSurface.topAnchor.constraint(equalTo: mediaRow.topAnchor),
@@ -1726,13 +1730,30 @@ final class PreviewController: NSViewController {
         // video gestures stay on the canvas. Keep the left controls above it in
         // the responder hit-test order if the player view's frame reaches into
         // the adjacent stack during Auto Layout.
-        mediaRow.addSubview(volumeStack, positioned: .above, relativeTo: videoSurface)
+        mediaRow.addSubview(leftControlRail, positioned: .above, relativeTo: videoSurface)
         timeLabel.alignment = .center; timeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular); timeLabel.textColor = .secondaryLabelColor; timeLabel.setContentHuggingPriority(.required, for: .vertical); timeLabel.setContentCompressionResistancePriority(.required, for: .vertical); root.addArrangedSubview(timeLabel)
         root.addArrangedSubview(timeline); timeline.heightAnchor.constraint(equalToConstant: 76).isActive = true
         PreviewContentLayout.constrainToContentWidth(mediaRow, in: root)
         PreviewContentLayout.constrainToContentWidth(timeline, in: root)
         timeline.hoverStarted = { [weak self] in self?.beginHover() }; timeline.hoverEnded = { [weak self] in self?.endHover() }; timeline.hoverChanged = { [weak self] fraction in self?.scheduleHover(fraction) }
         updateSpeedButtons()
+    }
+
+    private func configureVideoControlRails() {
+        leftControlRail.identifier = NSUserInterfaceItemIdentifier("preview-left-control-rail")
+        leftControlRail.orientation = .horizontal
+        leftControlRail.alignment = .centerY
+        leftControlRail.spacing = 12
+        leftControlRail.distribution = .fill
+        rightControlRail.identifier = NSUserInterfaceItemIdentifier("preview-right-control-rail")
+        rightControlRail.orientation = .vertical
+        rightControlRail.alignment = .trailing
+        rightControlRail.spacing = 0
+        rightControlRail.distribution = .fill
+        for rail in [leftControlRail, rightControlRail] {
+            rail.setContentHuggingPriority(.required, for: .horizontal)
+            rail.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
     }
 
     private func configureImageUI(in root: NSStackView) {
@@ -1777,12 +1798,20 @@ final class PreviewController: NSViewController {
         displayTransformStack.alignment = .centerX
         displayTransformStack.spacing = 8
         displayTransformStack.distribution = .fill
-        configureTransportButton(rotateCounterclockwiseButton, title: "逆90°", action: #selector(rotateCounterclockwise(_:)), width: 64)
-        configureTransportButton(rotateClockwiseButton, title: "顺90°", action: #selector(rotateClockwise(_:)), width: 64)
-        configureTransportButton(mirrorButton, title: "镜像", action: #selector(toggleMirror(_:)), width: 64)
+        if mediaKind == .video {
+            configureCompactSymbolButton(rotateCounterclockwiseButton, title: "逆90°", symbolName: "rotate.left", action: #selector(rotateCounterclockwise(_:)))
+            configureCompactSymbolButton(rotateClockwiseButton, title: "顺90°", symbolName: "rotate.right", action: #selector(rotateClockwise(_:)))
+            configureCompactSymbolButton(mirrorButton, title: "镜像", symbolName: "arrow.left.and.right", action: #selector(toggleMirror(_:)))
+        } else {
+            // Image editing retains its existing text controls; only the video
+            // playback rail is intentionally compacted into icon buttons.
+            configureTransportButton(rotateCounterclockwiseButton, title: "逆90°", action: #selector(rotateCounterclockwise(_:)), width: 64)
+            configureTransportButton(rotateClockwiseButton, title: "顺90°", action: #selector(rotateClockwise(_:)), width: 64)
+            configureTransportButton(mirrorButton, title: "镜像", action: #selector(toggleMirror(_:)), width: 64)
+        }
         [rotateCounterclockwiseButton, rotateClockwiseButton, mirrorButton].forEach(displayTransformStack.addArrangedSubview)
         if mediaKind == .video {
-            configureTransportButton(videoScreenshotButton, title: "截图", action: #selector(captureVideoScreenshot(_:)), width: 64)
+            configureCompactSymbolButton(videoScreenshotButton, title: "截图", symbolName: "camera", action: #selector(captureVideoScreenshot(_:)))
             displayTransformStack.addArrangedSubview(videoScreenshotButton)
             updateVideoScreenshotButton()
         }
@@ -1792,6 +1821,30 @@ final class PreviewController: NSViewController {
     private func speedTitle(_ rate: Float) -> String { rate.rounded() == rate ? "\(Int(rate))×" : "\(rate)×" }
     private func transportButton(title: String, action: Selector, width: CGFloat = 82) -> NSButton { let button = NSButton(); configureTransportButton(button, title: title, action: action, width: width); return button }
     private func configureTransportButton(_ button: NSButton, title: String, action: Selector, width: CGFloat = 82) { button.title = title; button.target = self; button.action = action; button.font = .systemFont(ofSize: 14, weight: .semibold); button.bezelStyle = .rounded; button.alignment = .center; button.widthAnchor.constraint(equalToConstant: width).isActive = true; button.heightAnchor.constraint(equalToConstant: 40).isActive = true; button.contentTintColor = .white; button.bezelColor = .darkGray }
+    private func configureCompactSymbolButton(_ button: NSButton, title: String, symbolName: String, action: Selector) {
+        button.title = title
+        button.target = self
+        button.action = action
+        button.font = .systemFont(ofSize: 12, weight: .semibold)
+        button.bezelStyle = .rounded
+        button.alignment = .center
+        button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        button.contentTintColor = .white
+        button.bezelColor = .darkGray
+        button.imageScaling = .scaleProportionallyDown
+        button.toolTip = title
+        button.setAccessibilityLabel(title)
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) {
+            button.image = image
+            button.imagePosition = .imageOnly
+        } else {
+            // System Symbols are available on the supported OS, but retain a
+            // readable action name if a symbol is ever unavailable.
+            button.image = nil
+            button.imagePosition = .noImage
+        }
+    }
 
     @objc private func selectSpeed(_ sender: NSButton) {
         cancelLoopSeek()
@@ -1838,20 +1891,27 @@ final class PreviewController: NSViewController {
         mirrorButton.state = transform.isMirrored ? .on : .off
         mirrorButton.bezelColor = transform.isMirrored ? .systemBlue : .darkGray
         mirrorButton.contentTintColor = .white
-        let degrees = transform.quarterTurnsClockwise * 90
-        let stateDescription = degrees == 0 ? "原始方向" : "顺时针 \(degrees)°"
-        rotateCounterclockwiseButton.toolTip = "当前：\(stateDescription)；每次逆时针旋转 90°"
-        rotateClockwiseButton.toolTip = "当前：\(stateDescription)；每次顺时针旋转 90°"
-        mirrorButton.toolTip = transform.isMirrored ? "已镜像；再次点击关闭" : "左右镜像"
+        if mediaKind == .video {
+            rotateCounterclockwiseButton.toolTip = "逆90°"
+            rotateClockwiseButton.toolTip = "顺90°"
+            mirrorButton.toolTip = "镜像"
+        } else {
+            let degrees = transform.quarterTurnsClockwise * 90
+            let stateDescription = degrees == 0 ? "原始方向" : "顺时针 \(degrees)°"
+            rotateCounterclockwiseButton.toolTip = "当前：\(stateDescription)；每次逆时针旋转 90°"
+            rotateClockwiseButton.toolTip = "当前：\(stateDescription)；每次顺时针旋转 90°"
+            mirrorButton.toolTip = transform.isMirrored ? "已镜像；再次点击关闭" : "左右镜像"
+        }
     }
 
     private func updateVideoScreenshotButton() {
         guard mediaKind == .video else { return }
-        videoScreenshotButton.title = videoScreenshotCaptureGate.isPending ? "截图中…" : "截图"
+        // Keep the compact action affordance stable while capture is pending;
+        // progress remains visible in trimExportStatus rather than replacing
+        // the icon with a text label.
+        videoScreenshotButton.toolTip = "截图"
+        videoScreenshotButton.setAccessibilityLabel("截图")
         videoScreenshotButton.isEnabled = !videoScreenshotCaptureGate.isPending && !isExporting
-        videoScreenshotButton.toolTip = videoScreenshotCaptureGate.isPending
-            ? "正在保存当前视频帧"
-            : "按当前播放位置保存完整分辨率 JPEG；不包含界面、缩放或裁切"
     }
 
     private func beginVideoScreenshotCapture() {

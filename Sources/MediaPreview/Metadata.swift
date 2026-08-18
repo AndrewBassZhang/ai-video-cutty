@@ -270,8 +270,18 @@ enum MetadataError: Error, LocalizedError, Sendable { case unavailable, timedOut
 }
 
 enum FFprobe {
-    static let executable = URL(fileURLWithPath: "/opt/homebrew/bin/ffprobe")
     static let outputLimit = 2 * 1024 * 1024
+
+    static func candidateURLs(environment: [String: String]) -> [URL] {
+        ExternalMediaToolLocator.candidateURLs(named: "ffprobe", environment: environment)
+    }
+
+    static func executableURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> URL? {
+        ExternalMediaToolLocator.executableURL(named: "ffprobe", environment: environment, fileManager: fileManager)
+    }
 
     static func inspect(url: URL, completion: @escaping @Sendable (Result<MediaMetadata, MetadataError>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -286,7 +296,7 @@ enum FFprobe {
     }
 
     private static func inspectBlocking(url: URL) throws -> MediaMetadata {
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw MetadataError.unavailable }
+        guard let executable = executableURL() else { throw MetadataError.unavailable }
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("media-preview-\(UUID().uuidString).json")
         FileManager.default.createFile(atPath: outputURL.path, contents: nil)
         defer { try? FileManager.default.removeItem(at: outputURL) }

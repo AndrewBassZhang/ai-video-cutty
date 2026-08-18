@@ -6,6 +6,8 @@
     <string>MediaPreview</string>
     <key>CFBundleIdentifier</key>
     <string>local.codex.finder-media-preview</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>Media Preview</string>
     <key>CFBundlePackageType</key>

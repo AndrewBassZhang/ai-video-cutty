@@ -22,7 +22,7 @@ Finder Media Preview is a community-built, local-first macOS media preview utili
 - Xcode Command Line Tools and a Swift toolchain compatible with the package's Swift 6 manifest, for source builds.
 - FFmpeg is optional for normal preview. It is required for A/B trim export and audio-stream export; `ffprobe` is optional for enhanced media metadata.
 
-The app bundle does **not** contain FFmpeg or ffprobe. It looks for externally installed FFmpeg in standard Homebrew/system locations and in the launch environment's `PATH`.
+The app bundle does **not** contain FFmpeg or ffprobe. The optional installer keeps its externally downloaded pair in `~/Library/Application Support/Finder Media Preview/bin`; the app checks that user-managed directory first, then standard system locations and the launch environment's `PATH`.
 
 ## Build and test
 
@@ -45,7 +45,7 @@ To build the distributable app bundle used by this prototype:
 Scripts/build.sh
 ```
 
-The script creates `build/MediaPreview.app`, copies the Chinese manual and FFmpeg installer script into the bundle, and applies ad-hoc signing for local use. It recreates that build bundle on each run.
+The script creates `build/MediaPreview.app`, copies the Chinese manual and optional FFmpeg installer script into the bundle, creates `AppIcon.icns`, and applies ad-hoc signing for local use. It recreates that build bundle on each run.
 
 To create a drag-to-install disk image after the app bundle exists:
 
@@ -69,7 +69,8 @@ The prototype build uses ad-hoc signing; it is not Developer ID signed or notari
 
 1. Open `Finder-Media-Preview-macOS.dmg`.
 2. Drag **Finder Media Preview.app** to **Applications**.
-3. Launch it once before using the Finder Service.
+3. Control-click the app in **Applications**, choose **Open**, then confirm **Open** on the first launch. This prototype is ad-hoc signed and not notarized.
+4. Reopen the app before using the Finder Service. The DMG also includes `安装说明.txt`, `使用说明.md`, third-party notices, and an optional FFmpeg installer.
 
 ## Finder Service and shortcut setup
 
@@ -105,15 +106,15 @@ Plain arrow controls are reserved transport controls. For a playing video, relea
 
 ## FFmpeg: optional, external, and explicit
 
-FFmpeg is not needed to open or review media. It is required for precise A/B trim export and for audio-stream export. If it is unavailable, the app shows an install option; it does not silently install anything.
+FFmpeg is not needed to open or review media. It is required for precise A/B trim export and audio-stream export; `ffprobe` adds richer media metadata. If either is unavailable, the app shows an install option; it does not silently install anything.
 
-The packaged installer opens in Terminal only after you select **Install FFmpeg…**. It uses Homebrew's official installer when Homebrew is missing, then installs FFmpeg through Homebrew. It does not download a bundled or third-party FFmpeg binary. The installer can optionally use a temporary USTC Homebrew bottles mirror for that single installation run; choose the official route if you do not want that mirror.
+The packaged installer runs only after you explicitly open it or choose **Install FFmpeg…**. It downloads the external `ffmpeg-static b6.1.1` runtime to `~/Library/Application Support/Finder Media Preview/bin`, with no administrator privileges and no bundled binary. Its default transport is `https://cdn.npmmirror.com/binaries/ffmpeg-static/b6.1.1`; only a connection or HTTP failure falls back to the fixed upstream release transport at `https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1`. It verifies the pinned SHA-256 of both downloaded gzip assets before installation; a digest mismatch stops rather than falling back.
 
-You may instead install FFmpeg yourself. Restart the app after installation so its executable check is refreshed.
+The external runtime is GPL-3.0-or-later. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the exact source, license link, asset names, and digests. You may instead install FFmpeg yourself. Restart the app after installation so its executable check is refreshed.
 
 ## Privacy and offline behavior
 
-Core preview, editing, metadata fallback, and file-save workflows run locally. The inspected application code contains no account sign-in, telemetry client, cloud upload, or network media processing path. The only networked workflow included in this prototype is the optional, user-initiated Homebrew installer used to obtain FFmpeg.
+Core preview, editing, metadata fallback, and file-save workflows run locally. The inspected application code contains no account sign-in, telemetry client, cloud upload, or network media processing path. The only networked workflow included in this prototype is the optional, user-initiated external-runtime download described above.
 
 The Finder Service receives the selected file URL from the Finder pasteboard. Custom shortcut bindings are stored locally in user defaults. Media files are read from their local paths and are written only through an export or save action you choose. See [SECURITY.md](SECURITY.md) for the exact write and external-tool boundaries.
 
@@ -138,7 +139,9 @@ Potential community priorities, not release commitments:
 ## Documentation
 
 - [Architecture](Docs/ARCHITECTURE.md)
+- [DMG installation guide](Docs/安装说明.txt)
 - [Chinese user manual](Docs/使用说明.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)

@@ -622,6 +622,164 @@ enum ImageJPEGExporter {
     }
 }
 
+enum VideoFrameScreenshotError: LocalizedError {
+    case frameUnavailable
+    case invalidEncodedJPEG
+    case cancelled
+    case writeFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .frameUnavailable:
+            return "无法读取当前视频帧，未写入任何文件。"
+        case .invalidEncodedJPEG:
+            return "截图 JPEG 校验失败，未写入任何文件。"
+        case .cancelled:
+            return "截图已取消，未写入任何文件。"
+        case .writeFailed(let message):
+            return "截图保存失败，原视频和现有文件均未修改。\n\(message)"
+        }
+    }
+}
+
+/// The video screenshot uses a direct AVFoundation frame, never the player
+/// view. The track's preferred transform is applied by the generator first;
+/// this helper then bakes only the user's rotate/mirror display state.
+enum VideoFrameScreenshotExporter {
+    static func jpegData(from frame: CGImage, displayTransform: VideoDisplayTransform) throws -> Data {
+        let rendered = try ImageRasterExporter.renderedImage(
+            source: frame,
+            plan: ImageExportPlan(displayTransform: displayTransform, crop: nil)
+        )
+        let data = try ImageJPEGExporter.conversionData(from: rendered)
+        try validateJPEG(data, expectedWidth: rendered.width, expectedHeight: rendered.height)
+        return data
+    }
+
+    static func validateJPEG(_ data: Data, expectedWidth: Int, expectedHeight: Int) throws {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              (CGImageSourceGetType(source) as String?) == UTType.jpeg.identifier,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              image.width == expectedWidth,
+              image.height == expectedHeight else {
+            throw VideoFrameScreenshotError.invalidEncodedJPEG
+        }
+    }
+}
+
+/// The final rename is serialized with teardown invalidation. Encoding and the
+/// temporary write remain off-main, while a closed preview cannot commit a
+/// stale callback's file beside the source video.
+final class VideoFrameScreenshotCommitToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+
+    var isActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return active
+    }
+
+    func invalidate() {
+        lock.lock()
+        active = false
+        lock.unlock()
+    }
+
+    func performIfActive<T>(_ operation: () throws -> T) rethrows -> T? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard active else { return nil }
+        return try operation()
+    }
+}
+
+enum VideoFrameScreenshotSavePlan {
+    static func candidateURL(for sourceURL: URL, number: Int) -> URL {
+        let source = sourceURL.standardizedFileURL
+        let filename = "\(source.deletingPathExtension().lastPathComponent)-截图-\(String(format: "%03d", number)).jpg"
+        return source.deletingLastPathComponent().appendingPathComponent(filename, isDirectory: false)
+    }
+
+    static func suggestedSiblingURL(
+        for sourceURL: URL,
+        fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+    ) -> URL {
+        var number = 1
+        while true {
+            let candidate = candidateURL(for: sourceURL, number: number).standardizedFileURL
+            if candidate != sourceURL.standardizedFileURL, !fileExists(candidate) { return candidate }
+            number += 1
+        }
+    }
+
+    /// Writes to a same-directory temporary file and uses a non-replacing move
+    /// for the final name. If another process occupies a candidate after the
+    /// initial check, it advances to the next suffix instead of overwriting it.
+    static func commitJPEGData(
+        _ data: Data,
+        beside sourceURL: URL,
+        fileManager: FileManager = .default,
+        authorizeFinalMove: ((() throws -> URL) throws -> URL?)? = nil
+    ) throws -> URL {
+        let source = sourceURL.standardizedFileURL
+        var number = 1
+
+        while true {
+            let candidate = candidateURL(for: source, number: number).standardizedFileURL
+            guard candidate != source else {
+                throw VideoFrameScreenshotError.writeFailed("截图目标不能覆盖原视频。")
+            }
+            guard !fileManager.fileExists(atPath: candidate.path) else {
+                number += 1
+                continue
+            }
+
+            let temporaryURL = candidate.deletingLastPathComponent().appendingPathComponent(".MediaPreview-Screenshot-\(UUID().uuidString).jpg", isDirectory: false)
+            do {
+                try data.write(to: temporaryURL, options: .atomic)
+                let move: () throws -> URL = {
+                    try fileManager.moveItem(at: temporaryURL, to: candidate)
+                    return candidate
+                }
+                let committed: URL?
+                if let authorizeFinalMove {
+                    committed = try authorizeFinalMove(move)
+                } else {
+                    committed = try move()
+                }
+                guard let committed else {
+                    try? fileManager.removeItem(at: temporaryURL)
+                    throw VideoFrameScreenshotError.cancelled
+                }
+                return committed
+            } catch let error as VideoFrameScreenshotError {
+                try? fileManager.removeItem(at: temporaryURL)
+                throw error
+            } catch {
+                try? fileManager.removeItem(at: temporaryURL)
+                if fileManager.fileExists(atPath: candidate.path) {
+                    number += 1
+                    continue
+                }
+                throw VideoFrameScreenshotError.writeFailed(error.localizedDescription)
+            }
+        }
+    }
+}
+
+struct VideoFrameScreenshotCaptureGate: Equatable {
+    private(set) var isPending = false
+
+    mutating func begin() -> Bool {
+        guard !isPending else { return false }
+        isPending = true
+        return true
+    }
+
+    mutating func finish() { isPending = false }
+}
+
 struct ABLoopExactSeekRequest: Equatable {
     static let preferredTimescale: CMTimeScale = 600
 
@@ -792,19 +950,42 @@ enum ABTrimExportError: LocalizedError {
     }
 }
 
-/// Finds externally-installed FFmpeg without using a shell. The app never
-/// bundles a binary: the executable must be in a standard location or PATH.
-enum FFmpegLocator {
-    static func candidateURLs(environment: [String: String]) -> [URL] {
-        let standardPaths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
-        let pathEntries = environment["PATH"]?.split(separator: ":").map(String.init) ?? []
-        let urls = standardPaths.map(URL.init(fileURLWithPath:)) + pathEntries.map { URL(fileURLWithPath: $0).appendingPathComponent("ffmpeg") }
+/// Finds optional external media tools without using a shell. The app never
+/// bundles a binary. Its user-managed installer directory wins over standard
+/// locations and PATH so both FFmpeg and FFprobe resolve as an installed pair.
+enum ExternalMediaToolLocator {
+    static func candidateURLs(named executableName: String, environment: [String: String]) -> [URL] {
+        let homeDirectory = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        let userManagedDirectory = URL(fileURLWithPath: homeDirectory, isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Finder Media Preview/bin", isDirectory: true)
+        let standardPaths = [
+            userManagedDirectory.appendingPathComponent(executableName).path,
+            "/opt/homebrew/bin/\(executableName)",
+            "/usr/local/bin/\(executableName)",
+            "/usr/bin/\(executableName)"
+        ]
+        let pathEntries = environment["PATH"]?.split(separator: ":").map(String.init).filter { !$0.isEmpty } ?? []
+        let urls = standardPaths.map(URL.init(fileURLWithPath:)) + pathEntries.map { URL(fileURLWithPath: $0, isDirectory: true).appendingPathComponent(executableName) }
         var seen = Set<String>()
         return urls.filter { seen.insert($0.standardizedFileURL.path).inserted }
     }
 
+    static func executableURL(
+        named executableName: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> URL? {
+        candidateURLs(named: executableName, environment: environment).first { fileManager.isExecutableFile(atPath: $0.path) }
+    }
+}
+
+enum FFmpegLocator {
+    static func candidateURLs(environment: [String: String]) -> [URL] {
+        ExternalMediaToolLocator.candidateURLs(named: "ffmpeg", environment: environment)
+    }
+
     static func executableURL(environment: [String: String] = ProcessInfo.processInfo.environment, fileManager: FileManager = .default) -> URL? {
-        candidateURLs(environment: environment).first { fileManager.isExecutableFile(atPath: $0.path) }
+        ExternalMediaToolLocator.executableURL(named: "ffmpeg", environment: environment, fileManager: fileManager)
     }
 }
 
@@ -1393,8 +1574,8 @@ private final class ImageCompressionSavePanelAccessory: NSObject, NSTextFieldDel
 final class PreviewController: NSViewController {
     private let url: URL; private let mediaKind: MediaKind; private let metadataInspector: MediaMetadataInspector?; private let player = AVPlayer(); private let videoSurface = ZoomablePlayerSurface(); private var playerView: AVPlayerView { videoSurface.playerView }; private let imageSurface = ZoomableImageSurface(); private var imageView: NSImageView { imageSurface.imageView }
     private let metadataStack = NSStackView()
-    private let row1 = NSStackView(); private let row2 = NSStackView(); private let mediaRow = NSStackView(); private let volumeStack = NSStackView(); private let displayTransformStack = NSStackView(); private let rotateCounterclockwiseButton = NSButton(); private let rotateClockwiseButton = NSButton(); private let mirrorButton = NSButton(); private let imageActionStack = NSStackView(); private let imageCropSaveButton = NSButton(); private let imageJPEGConversionButton = NSButton(); private let imageJPEGCompressionButton = NSButton(); private let speedStack = NSStackView(); private let timeline = TimelineView(); private let timeLabel = NSTextField(labelWithString: ""); private let loopButton = NSButton(); private let trimExportButton = NSButton(); private let audioExportButton = NSButton(); private let trimExportStatus = NSTextField(labelWithString: ""); private let trimExportProgress = NSProgressIndicator(); private let cancelExportButton = NSButton(); private let muteButton = NSButton(); private let volumeControl = VerticalVolumeControl(); private let topActionStack = NSStackView(); private let filenameLabel = NSTextField(wrappingLabelWithString: "")
-    private var imageGenerator: AVAssetImageGenerator?; private var cropPreviewGenerator: AVAssetImageGenerator?; private var cropPreviewGenerationID = 0; private var cropPreviewCompletion: ((NSImage?) -> Void)?; private var timeObserver: Any?; private var endObserver: NSObjectProtocol?; private var hoverWorkItem: DispatchWorkItem?; private var waveformExtraction: WaveformExtraction?
+    private let row1 = NSStackView(); private let row2 = NSStackView(); private let mediaRow = NSStackView(); private let volumeStack = NSStackView(); private let displayTransformStack = NSStackView(); private let rotateCounterclockwiseButton = NSButton(); private let rotateClockwiseButton = NSButton(); private let mirrorButton = NSButton(); private let videoScreenshotButton = NSButton(); private let imageActionStack = NSStackView(); private let imageCropSaveButton = NSButton(); private let imageJPEGConversionButton = NSButton(); private let imageJPEGCompressionButton = NSButton(); private let speedStack = NSStackView(); private let timeline = TimelineView(); private let timeLabel = NSTextField(labelWithString: ""); private let loopButton = NSButton(); private let trimExportButton = NSButton(); private let audioExportButton = NSButton(); private let trimExportStatus = NSTextField(labelWithString: ""); private let trimExportProgress = NSProgressIndicator(); private let cancelExportButton = NSButton(); private let muteButton = NSButton(); private let volumeControl = VerticalVolumeControl(); private let topActionStack = NSStackView(); private let filenameLabel = NSTextField(wrappingLabelWithString: "")
+    private var imageGenerator: AVAssetImageGenerator?; private var cropPreviewGenerator: AVAssetImageGenerator?; private var cropPreviewGenerationID = 0; private var cropPreviewCompletion: ((NSImage?) -> Void)?; private var videoScreenshotGenerator: AVAssetImageGenerator?; private var videoScreenshotGenerationID = 0; private var videoScreenshotCommitToken: VideoFrameScreenshotCommitToken?; private var videoScreenshotCaptureGate = VideoFrameScreenshotCaptureGate(); private var timeObserver: Any?; private var endObserver: NSObjectProtocol?; private var hoverWorkItem: DispatchWorkItem?; private var waveformExtraction: WaveformExtraction?
     private var hoverActive = false; private var hoverRate: Float = 0; private var oldMuted = false; private var chosenForwardRate: Float = 1; private var shuttleRate: Float = 0; private var plainArrowShuttleKeyCode: UInt16?; private var plainArrowRestoreRate: Float?; private var lastAudibleVolume: Float = 1; private var videoDisplayTransform = VideoDisplayTransform(); private var imageDisplayTransform = VideoDisplayTransform()
     private var markers = ABMarkerState(); private var loopEnabled: Bool; private var loopSeekCoordinator = ABLoopExactSeekCoordinator()
     private var speedButtons: [NSButton] = []; private var ffmpegExportProcess: FFmpegTrimProcess?; private var isPreparingExport = false; private var activeExportIsAudio = false; private var isCancellingExport = false; private var cropEditor: CropEditorSheetController?; private var imageCropEditor: CropEditorSheetController?; private var savedVideoCropSelection: VideoCropSelection?; private var savedImageCropSelection: VideoCropSelection?; private var imageSourceCGImage: CGImage?; private var imageSourceType: CFString?; private var imageSourceProperties: [CFString: Any]?
@@ -1600,6 +1781,11 @@ final class PreviewController: NSViewController {
         configureTransportButton(rotateClockwiseButton, title: "顺90°", action: #selector(rotateClockwise(_:)), width: 64)
         configureTransportButton(mirrorButton, title: "镜像", action: #selector(toggleMirror(_:)), width: 64)
         [rotateCounterclockwiseButton, rotateClockwiseButton, mirrorButton].forEach(displayTransformStack.addArrangedSubview)
+        if mediaKind == .video {
+            configureTransportButton(videoScreenshotButton, title: "截图", action: #selector(captureVideoScreenshot(_:)), width: 64)
+            displayTransformStack.addArrangedSubview(videoScreenshotButton)
+            updateVideoScreenshotButton()
+        }
         updateDisplayTransformControls()
     }
 
@@ -1618,6 +1804,7 @@ final class PreviewController: NSViewController {
     @objc private func clearAB(_ sender: Any?) { markers.clear(); cancelLoopSeek(); updateABMarkers() }
     @objc private func rotateCounterclockwise(_ sender: Any?) { updateDisplayTransform(by: -1) }
     @objc private func rotateClockwise(_ sender: Any?) { updateDisplayTransform(by: 1) }
+    @objc private func captureVideoScreenshot(_ sender: Any?) { beginVideoScreenshotCapture() }
     @objc private func toggleMirror(_ sender: Any?) {
         switch mediaKind {
         case .video:
@@ -1656,6 +1843,124 @@ final class PreviewController: NSViewController {
         rotateCounterclockwiseButton.toolTip = "当前：\(stateDescription)；每次逆时针旋转 90°"
         rotateClockwiseButton.toolTip = "当前：\(stateDescription)；每次顺时针旋转 90°"
         mirrorButton.toolTip = transform.isMirrored ? "已镜像；再次点击关闭" : "左右镜像"
+    }
+
+    private func updateVideoScreenshotButton() {
+        guard mediaKind == .video else { return }
+        videoScreenshotButton.title = videoScreenshotCaptureGate.isPending ? "截图中…" : "截图"
+        videoScreenshotButton.isEnabled = !videoScreenshotCaptureGate.isPending && !isExporting
+        videoScreenshotButton.toolTip = videoScreenshotCaptureGate.isPending
+            ? "正在保存当前视频帧"
+            : "按当前播放位置保存完整分辨率 JPEG；不包含界面、缩放或裁切"
+    }
+
+    private func beginVideoScreenshotCapture() {
+        guard mediaKind == .video, videoScreenshotCaptureGate.begin() else { return }
+        guard let asset = player.currentItem?.asset else {
+            videoScreenshotCaptureGate.finish()
+            updateVideoScreenshotButton()
+            presentVideoScreenshotError(VideoFrameScreenshotError.frameUnavailable)
+            return
+        }
+
+        let requestedTime = player.currentTime()
+        guard requestedTime.isValid, !requestedTime.isIndefinite else {
+            videoScreenshotCaptureGate.finish()
+            updateVideoScreenshotButton()
+            presentVideoScreenshotError(VideoFrameScreenshotError.frameUnavailable)
+            return
+        }
+
+        videoScreenshotGenerator?.cancelAllCGImageGeneration()
+        videoScreenshotCommitToken?.invalidate()
+        videoScreenshotGenerationID += 1
+        let generationID = videoScreenshotGenerationID
+        let commitToken = VideoFrameScreenshotCommitToken()
+        videoScreenshotCommitToken = commitToken
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        // A zero maximum size asks AVFoundation for the source raster, not the
+        // player view's scaled presentation. The preferred orientation is
+        // baked here before the user rotate/mirror state is applied below.
+        generator.maximumSize = .zero
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        videoScreenshotGenerator = generator
+
+        let displayTransform = videoDisplayTransform
+        let sourceURL = url
+        updateVideoScreenshotButton()
+        trimExportStatus.stringValue = "正在截图…"
+        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: requestedTime)]) { [weak self, commitToken] _, image, _, _, error in
+            guard let image else {
+                DispatchQueue.main.async {
+                    self?.finishVideoScreenshotCapture(
+                        generationID: generationID,
+                        commitToken: commitToken,
+                        result: .failure(error ?? VideoFrameScreenshotError.frameUnavailable)
+                    )
+                }
+                return
+            }
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result: Result<URL, Error>
+                do {
+                    guard commitToken.isActive else { throw VideoFrameScreenshotError.cancelled }
+                    let data = try VideoFrameScreenshotExporter.jpegData(from: image, displayTransform: displayTransform)
+                    guard commitToken.isActive else { throw VideoFrameScreenshotError.cancelled }
+                    let destination = try VideoFrameScreenshotSavePlan.commitJPEGData(
+                        data,
+                        beside: sourceURL,
+                        authorizeFinalMove: { operation in
+                            try commitToken.performIfActive(operation)
+                        }
+                    )
+                    result = .success(destination)
+                } catch {
+                    result = .failure(error)
+                }
+                DispatchQueue.main.async {
+                    self?.finishVideoScreenshotCapture(
+                        generationID: generationID,
+                        commitToken: commitToken,
+                        result: result
+                    )
+                }
+            }
+        }
+    }
+
+    private func finishVideoScreenshotCapture(
+        generationID: Int,
+        commitToken: VideoFrameScreenshotCommitToken,
+        result: Result<URL, Error>
+    ) {
+        guard videoScreenshotGenerationID == generationID,
+              videoScreenshotCommitToken === commitToken else { return }
+        videoScreenshotGenerator = nil
+        videoScreenshotCommitToken = nil
+        videoScreenshotCaptureGate.finish()
+        updateVideoScreenshotButton()
+
+        switch result {
+        case .success(let destination):
+            trimExportStatus.stringValue = "已保存 \(destination.lastPathComponent)"
+        case .failure(let error):
+            presentVideoScreenshotError(error)
+        }
+    }
+
+    private func presentVideoScreenshotError(_ error: Error) {
+        trimExportStatus.stringValue = error.localizedDescription
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "截图保存失败"
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "好")
+        alert.beginSheetModal(for: window)
     }
 
     private func setVolume(_ requestedVolume: Float) {
@@ -2570,6 +2875,7 @@ final class PreviewController: NSViewController {
         audioExportButton.title = busy && activeExportIsAudio ? "正在导出…" : "导出音频…"
         trimExportButton.isEnabled = !busy && currentTrimRange() != nil
         audioExportButton.isEnabled = !busy && (mediaKind == .video || mediaKind == .audio)
+        updateVideoScreenshotButton()
         trimExportStatus.stringValue = status
     }
 
@@ -2630,5 +2936,5 @@ final class PreviewController: NSViewController {
         guard duration.isFinite, duration > 0 else { return }
         performExactLoopSeek(to: ABLoopMath.endTarget(a: markers.pointA, b: markers.pointB, duration: duration), resumeRate: chosenForwardRate)
     }
-    func tearDown() { metadataInspectionToken.invalidate(); nativeMetadataTask?.cancel(); nativeMetadataTask = nil; imageLoadPending = false; cancelLoopSeek(); hoverWorkItem?.cancel(); waveformExtraction?.cancel(); waveformExtraction = nil; imageGenerator?.cancelAllCGImageGeneration(); imageGenerator = nil; cropPreviewGenerator?.cancelAllCGImageGeneration(); cropPreviewGenerator = nil; cropPreviewGenerationID += 1; cropPreviewCompletion = nil; cropEditor = nil; imageCropEditor = nil; imageSourceCGImage = nil; imageSourceType = nil; imageSourceProperties = nil; ffmpegExportProcess?.cancel(); ffmpegExportProcess = nil; isPreparingExport = false; isCancellingExport = false; resetVideoExportProgress(); if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }; if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }; player.pause(); player.replaceCurrentItem(with: nil) }
+    func tearDown() { metadataInspectionToken.invalidate(); nativeMetadataTask?.cancel(); nativeMetadataTask = nil; imageLoadPending = false; cancelLoopSeek(); hoverWorkItem?.cancel(); waveformExtraction?.cancel(); waveformExtraction = nil; imageGenerator?.cancelAllCGImageGeneration(); imageGenerator = nil; cropPreviewGenerator?.cancelAllCGImageGeneration(); cropPreviewGenerator = nil; cropPreviewGenerationID += 1; cropPreviewCompletion = nil; videoScreenshotCommitToken?.invalidate(); videoScreenshotCommitToken = nil; videoScreenshotGenerator?.cancelAllCGImageGeneration(); videoScreenshotGenerator = nil; videoScreenshotGenerationID += 1; videoScreenshotCaptureGate.finish(); cropEditor = nil; imageCropEditor = nil; imageSourceCGImage = nil; imageSourceType = nil; imageSourceProperties = nil; ffmpegExportProcess?.cancel(); ffmpegExportProcess = nil; isPreparingExport = false; isCancellingExport = false; resetVideoExportProgress(); if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }; if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }; player.pause(); player.replaceCurrentItem(with: nil) }
 }

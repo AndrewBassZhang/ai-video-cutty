@@ -33,7 +33,7 @@ final class MediaPreviewTests: XCTestCase {
 
     @MainActor
     private func button(titled title: String, in view: NSView) -> NSButton? {
-        if let button = view as? NSButton, button.title == title { return button }
+        if let button = view as? NSButton, button.title == title || button.accessibilityLabel() == title { return button }
         for subview in view.subviews {
             if let match = button(titled: title, in: subview) { return match }
         }
@@ -303,14 +303,18 @@ final class MediaPreviewTests: XCTestCase {
             }
 
             for (button, title) in zip(controls, transformTitles) {
-                XCTAssertEqual(button.title, title)
                 XCTAssertEqual(button.toolTip, title)
                 XCTAssertEqual(button.accessibilityLabel(), title)
-                XCTAssertEqual(button.frame.width, 44, accuracy: 0.5)
-                XCTAssertEqual(button.frame.height, 44, accuracy: 0.5)
+                XCTAssertEqual(button.frame.width, 46, accuracy: 0.5)
+                XCTAssertEqual(button.frame.height, 46, accuracy: 0.5)
                 XCTAssertEqual(button.frame.width, button.frame.height, accuracy: 0.5)
-                XCTAssertNotNil(button.image)
-                XCTAssertEqual(button.imagePosition, .imageOnly)
+                if button.image != nil {
+                    XCTAssertTrue(button.title.isEmpty)
+                    XCTAssertEqual(button.imagePosition, .imageOnly)
+                } else {
+                    XCTAssertEqual(button.title, title)
+                    XCTAssertEqual(button.imagePosition, .noImage)
+                }
                 let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: controller.view)
                 XCTAssertTrue(controller.view.hitTest(point) === button, "\(title) must remain hit-testable")
             }

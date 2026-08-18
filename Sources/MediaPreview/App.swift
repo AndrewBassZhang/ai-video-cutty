@@ -1822,13 +1822,15 @@ final class PreviewController: NSViewController {
     private func transportButton(title: String, action: Selector, width: CGFloat = 82) -> NSButton { let button = NSButton(); configureTransportButton(button, title: title, action: action, width: width); return button }
     private func configureTransportButton(_ button: NSButton, title: String, action: Selector, width: CGFloat = 82) { button.title = title; button.target = self; button.action = action; button.font = .systemFont(ofSize: 14, weight: .semibold); button.bezelStyle = .rounded; button.alignment = .center; button.widthAnchor.constraint(equalToConstant: width).isActive = true; button.heightAnchor.constraint(equalToConstant: 40).isActive = true; button.contentTintColor = .white; button.bezelColor = .darkGray }
     private func configureCompactSymbolButton(_ button: NSButton, title: String, symbolName: String, action: Selector) {
-        button.title = title
         button.target = self
         button.action = action
         button.font = .systemFont(ofSize: 12, weight: .semibold)
-        button.bezelStyle = .rounded
+        button.bezelStyle = .smallSquare
         button.alignment = .center
-        button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 46).isActive = true
+        // smallSquare contributes one point above and below its alignment rect,
+        // so this produces a physical 46×46 button frame.
         button.heightAnchor.constraint(equalToConstant: 44).isActive = true
         button.contentTintColor = .white
         button.bezelColor = .darkGray
@@ -1836,11 +1838,13 @@ final class PreviewController: NSViewController {
         button.toolTip = title
         button.setAccessibilityLabel(title)
         if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title) {
+            button.title = ""
             button.image = image
             button.imagePosition = .imageOnly
         } else {
             // System Symbols are available on the supported OS, but retain a
-            // readable action name if a symbol is ever unavailable.
+            // short, readable action name if a symbol is ever unavailable.
+            button.title = title
             button.image = nil
             button.imagePosition = .noImage
         }

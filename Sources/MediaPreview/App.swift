@@ -1381,11 +1381,14 @@ private final class ImageCompressionSavePanelAccessory: NSObject, NSTextFieldDel
 @MainActor
 final class PreviewController: NSViewController {
     private let url: URL; private let mediaKind: MediaKind; private let player = AVPlayer(); private let videoSurface = ZoomablePlayerSurface(); private var playerView: AVPlayerView { videoSurface.playerView }; private let imageSurface = ZoomableImageSurface(); private var imageView: NSImageView { imageSurface.imageView }
+    private let metadataStack = NSStackView()
     private let row1 = NSStackView(); private let row2 = NSStackView(); private let mediaRow = NSStackView(); private let volumeStack = NSStackView(); private let displayTransformStack = NSStackView(); private let rotateCounterclockwiseButton = NSButton(); private let rotateClockwiseButton = NSButton(); private let mirrorButton = NSButton(); private let imageActionStack = NSStackView(); private let imageCropSaveButton = NSButton(); private let imageJPEGConversionButton = NSButton(); private let imageJPEGCompressionButton = NSButton(); private let speedStack = NSStackView(); private let timeline = TimelineView(); private let timeLabel = NSTextField(labelWithString: ""); private let loopButton = NSButton(); private let trimExportButton = NSButton(); private let audioExportButton = NSButton(); private let trimExportStatus = NSTextField(labelWithString: ""); private let trimExportProgress = NSProgressIndicator(); private let cancelExportButton = NSButton(); private let muteButton = NSButton(); private let volumeControl = VerticalVolumeControl(); private let topActionStack = NSStackView(); private let filenameLabel = NSTextField(wrappingLabelWithString: "")
     private var imageGenerator: AVAssetImageGenerator?; private var cropPreviewGenerator: AVAssetImageGenerator?; private var cropPreviewGenerationID = 0; private var cropPreviewCompletion: ((NSImage?) -> Void)?; private var timeObserver: Any?; private var endObserver: NSObjectProtocol?; private var hoverWorkItem: DispatchWorkItem?; private var waveformExtraction: WaveformExtraction?
     private var hoverActive = false; private var hoverRate: Float = 0; private var oldMuted = false; private var chosenForwardRate: Float = 1; private var shuttleRate: Float = 0; private var plainArrowShuttleKeyCode: UInt16?; private var plainArrowRestoreRate: Float?; private var lastAudibleVolume: Float = 1; private var videoDisplayTransform = VideoDisplayTransform(); private var imageDisplayTransform = VideoDisplayTransform()
     private var markers = ABMarkerState(); private var loopEnabled: Bool; private var loopSeekCoordinator = ABLoopExactSeekCoordinator()
     private var speedButtons: [NSButton] = []; private var ffmpegExportProcess: FFmpegTrimProcess?; private var isPreparingExport = false; private var activeExportIsAudio = false; private var isCancellingExport = false; private var cropEditor: CropEditorSheetController?; private var imageCropEditor: CropEditorSheetController?; private var savedVideoCropSelection: VideoCropSelection?; private var savedImageCropSelection: VideoCropSelection?; private var imageSourceCGImage: CGImage?; private var imageSourceType: CFString?; private var imageSourceProperties: [CFString: Any]?
+    private var metadataRowHeightConstraints: [NSLayoutConstraint] = []
+    private var metadataHeightConstraint: NSLayoutConstraint?
     var onShowShortcutSettings: (() -> Void)?
 
     init(url: URL, mediaKind: MediaKind) { self.url = url; self.mediaKind = mediaKind; self.loopEnabled = PlaybackLoopPolicy.defaultLoopEnabled(for: mediaKind); super.init(nibName: nil, bundle: nil) }
@@ -1394,11 +1397,29 @@ final class PreviewController: NSViewController {
     override func viewDidLoad() { super.viewDidLoad(); configureUI(); loadMedia() }
 
     private func configureUI() {
-        let root = NSStackView(); root.orientation = .vertical; root.alignment = .centerX; root.distribution = .fill; root.spacing = 8; root.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14); root.translatesAutoresizingMaskIntoConstraints = false
+        let root = NSStackView(); root.identifier = NSUserInterfaceItemIdentifier("preview-root"); root.orientation = .vertical; root.alignment = .centerX; root.distribution = .fill; root.spacing = 8; root.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14); root.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(root)
         NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: view.leadingAnchor), root.trailingAnchor.constraint(equalTo: view.trailingAnchor), root.topAnchor.constraint(equalTo: view.topAnchor), root.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
         configureTopActions()
-        [row1, row2].forEach { row in row.orientation = .horizontal; row.spacing = 12; row.alignment = .centerY; row.distribution = .fillProportionally; root.addArrangedSubview(row) }
+        metadataStack.identifier = NSUserInterfaceItemIdentifier("preview-metadata-stack")
+        metadataStack.orientation = .vertical
+        metadataStack.alignment = .centerX
+        metadataStack.distribution = .fill
+        metadataStack.spacing = 2
+        metadataStack.setContentHuggingPriority(.required, for: .vertical)
+        metadataStack.setContentCompressionResistancePriority(.required, for: .vertical)
+        [row1, row2].forEach { row in
+            row.orientation = .horizontal
+            row.spacing = 12
+            row.alignment = .centerY
+            row.distribution = .fillProportionally
+            row.setContentHuggingPriority(.required, for: .vertical)
+            row.setContentCompressionResistancePriority(.required, for: .vertical)
+            row.isHidden = true
+            metadataStack.addArrangedSubview(row)
+        }
+        root.addArrangedSubview(metadataStack)
+        updateMetadataLayout()
         switch mediaKind {
         case .image:
             imageView.imageScaling = .scaleProportionallyUpOrDown; imageView.imageAlignment = .alignCenter
@@ -1451,8 +1472,9 @@ final class PreviewController: NSViewController {
     }
 
     private func configureVideoUI(in root: NSStackView) {
+        mediaRow.identifier = NSUserInterfaceItemIdentifier("preview-media-row")
         mediaRow.orientation = .horizontal; mediaRow.alignment = .centerY; mediaRow.spacing = 12; mediaRow.distribution = .fill
-        mediaRow.setContentHuggingPriority(.defaultLow, for: .vertical); mediaRow.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        mediaRow.setContentHuggingPriority(NSLayoutConstraint.Priority(rawValue: 1), for: .vertical); mediaRow.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         videoSurface.setContentHuggingPriority(.defaultLow, for: .horizontal); videoSurface.setContentCompressionResistancePriority(.defaultLow, for: .horizontal); videoSurface.setContentHuggingPriority(.defaultLow, for: .vertical); videoSurface.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         videoSurface.onSingleClick = { [weak self] in self?.handle(.togglePlayback) }
         videoSurface.heightAnchor.constraint(greaterThanOrEqualToConstant: 430).isActive = true
@@ -1466,7 +1488,7 @@ final class PreviewController: NSViewController {
             // if the canvas extends into an adjacent column.
             mediaRow.insertArrangedSubview(displayTransformStack, at: 1)
         }
-        speedStack.orientation = .vertical; speedStack.alignment = .centerX; speedStack.spacing = 7; speedStack.distribution = .fill
+        speedStack.orientation = .vertical; speedStack.alignment = .centerX; speedStack.spacing = 3; speedStack.distribution = .fill
         for (index, rate) in PlaybackMath.speedOrder.enumerated() {
             let button = NSButton(title: speedTitle(rate), target: self, action: #selector(selectSpeed(_:)))
             button.tag = index; configureTransportButton(button, title: speedTitle(rate), action: #selector(selectSpeed(_:)))
@@ -1481,12 +1503,18 @@ final class PreviewController: NSViewController {
         trimExportStatus.alignment = .center; trimExportStatus.font = .systemFont(ofSize: 10); trimExportStatus.textColor = .secondaryLabelColor; trimExportStatus.lineBreakMode = .byTruncatingMiddle; trimExportStatus.widthAnchor.constraint(equalToConstant: 96).isActive = true; speedStack.addArrangedSubview(trimExportStatus)
         configureTransportButton(cancelExportButton, title: "取消导出", action: #selector(cancelExport(_:)), width: 96); cancelExportButton.isHidden = true; speedStack.addArrangedSubview(cancelExportButton)
         mediaRow.addArrangedSubview(speedStack); root.addArrangedSubview(mediaRow)
+        if mediaKind == .video {
+            NSLayoutConstraint.activate([
+                videoSurface.topAnchor.constraint(equalTo: mediaRow.topAnchor),
+                videoSurface.bottomAnchor.constraint(equalTo: mediaRow.bottomAnchor)
+            ])
+        }
         // ZoomablePlayerSurface deliberately claims every point in its bounds so
         // video gestures stay on the canvas. Keep the left controls above it in
         // the responder hit-test order if the player view's frame reaches into
         // the adjacent stack during Auto Layout.
         mediaRow.addSubview(volumeStack, positioned: .above, relativeTo: videoSurface)
-        timeLabel.alignment = .center; timeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular); timeLabel.textColor = .secondaryLabelColor; root.addArrangedSubview(timeLabel)
+        timeLabel.alignment = .center; timeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular); timeLabel.textColor = .secondaryLabelColor; timeLabel.setContentHuggingPriority(.required, for: .vertical); timeLabel.setContentCompressionResistancePriority(.required, for: .vertical); root.addArrangedSubview(timeLabel)
         root.addArrangedSubview(timeline); timeline.heightAnchor.constraint(equalToConstant: 76).isActive = true
         PreviewContentLayout.constrainToContentWidth(mediaRow, in: root)
         PreviewContentLayout.constrainToContentWidth(timeline, in: root)
@@ -2118,10 +2146,35 @@ final class PreviewController: NSViewController {
         imageSourceProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
     }
 
-    private func setMetadata(_ metadata: MediaMetadata) { setRow(row1, values: metadata.row1); setRow(row2, values: metadata.row2) }
+    private func setMetadata(_ metadata: MediaMetadata) { setMetadataRows(metadata.row1, metadata.row2) }
+    func setMetadataRows(_ firstRow: [String], _ secondRow: [String]) {
+        setRow(row1, values: firstRow)
+        setRow(row2, values: secondRow)
+        updateMetadataLayout()
+    }
     private func setRow(_ row: NSStackView, values: [String]) {
         row.arrangedSubviews.forEach { row.removeArrangedSubview($0); $0.removeFromSuperview() }
         for value in values { let field = NSTextField(labelWithString: value); field.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular); field.textColor = .secondaryLabelColor; row.addArrangedSubview(field) }
+        row.isHidden = values.isEmpty
+    }
+    private func updateMetadataLayout() {
+        metadataRowHeightConstraints.forEach { $0.isActive = false }
+        metadataHeightConstraint?.isActive = false
+        let rows = [row1, row2]
+        let rowHeights = rows.map { row -> CGFloat in
+            guard !row.isHidden else { return 0 }
+            return ceil(row.fittingSize.height)
+        }
+        metadataRowHeightConstraints = zip(rows, rowHeights).map { row, height in
+            let constraint = row.heightAnchor.constraint(equalToConstant: height)
+            constraint.isActive = true
+            return constraint
+        }
+        let visibleRowCount = rowHeights.filter { $0 > 0 }.count
+        let metadataHeight = rowHeights.reduce(0, +) + (visibleRowCount > 1 ? metadataStack.spacing * CGFloat(visibleRowCount - 1) : 0)
+        let heightConstraint = metadataStack.heightAnchor.constraint(equalToConstant: metadataHeight)
+        heightConstraint.isActive = true
+        metadataHeightConstraint = heightConstraint
     }
 
     private func generateFrames(asset: AVAsset, duration: Double) {

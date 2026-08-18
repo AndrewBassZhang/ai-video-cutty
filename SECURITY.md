@@ -41,24 +41,25 @@ The explicit overwrite choice is therefore destructive. Use **Save as New File**
 
 The app does not bundle FFmpeg or ffprobe.
 
-- FFmpeg is considered only when an executable is found at `/opt/homebrew/bin/ffmpeg`, `/usr/local/bin/ffmpeg`, `/usr/bin/ffmpeg`, or in the inherited `PATH`.
+- FFmpeg and ffprobe first use the user-managed pair at `~/Library/Application Support/Finder Media Preview/bin`, then standard system locations and the inherited `PATH`.
 - The first candidate passing `FileManager.isExecutableFile(atPath:)` is used. This checks executability, not publisher identity, signature, or package provenance.
-- FFprobe metadata enrichment uses `/opt/homebrew/bin/ffprobe`; native AVFoundation metadata is the fallback when it is unavailable or fails.
+- Native AVFoundation metadata is the fallback when ffprobe is unavailable or fails.
 
-Install external tools only from sources you trust. A writable or attacker-controlled `PATH` can cause a different executable to be selected. For a controlled deployment, use a managed path and verify the installed FFmpeg provenance independently.
+Install external tools only from sources you trust. A writable or attacker-controlled `PATH` can cause a different executable to be selected. For a controlled deployment, use the user-managed directory and verify the installed FFmpeg provenance independently.
 
-### Packaged Homebrew installer
+### Packaged per-user installer
 
 The bundled `安装 FFmpeg.command` is opened only after a user chooses **Install FFmpeg…** in the app. The app does not run the installer automatically.
 
 The script:
 
-- Uses Homebrew's official installer URL when Homebrew is missing.
-- Installs `ffmpeg` through Homebrew rather than downloading a bundled or third-party FFmpeg binary.
-- Can use a USTC Homebrew bottles/API mirror only for the current installer invocation, if the user accepts that option; it does not write the mirror setting to shell configuration files.
-- May cause Homebrew or macOS tools to request administrator authorization. Do not enter credentials unless you have reviewed the script and accept the Homebrew installation.
+- Downloads an external `ffmpeg-static b6.1.1` binary pair only after the user opens it; neither binary is bundled with the app.
+- Defaults to `https://cdn.npmmirror.com/binaries/ffmpeg-static/b6.1.1`. A fixed GitHub release transport is used only when the default request has a connection or HTTP failure, never when a checksum fails.
+- Verifies pinned SHA-256 values for both gzip assets before decompression and records the selected source and digest in `finder-media-preview-ffmpeg-static-manifest.txt`.
+- Installs only into `~/Library/Application Support/Finder Media Preview/bin`, does not request administrator privileges, and does not change shell configuration.
+- Uses a GPL-3.0-or-later external runtime. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records the exact source, license link, release asset names, and SHA-256 values.
 
-This installer is a supply-chain boundary. Treat updates to it, its URLs, mirror behavior, and package-manager assumptions as security-sensitive changes.
+This installer is a supply-chain boundary. Treat updates to it, its URLs, fallback rules, release tag, or checksums as security-sensitive changes.
 
 ### Process argument safety
 
@@ -68,7 +69,7 @@ FFprobe runs with a bounded five-second wait and caps captured JSON at 2 MiB bef
 
 ## Privacy and networking
 
-Core preview and local file operations are designed to work offline. The reviewed application sources do not include telemetry, user accounts, analytics, or remote media processing. The optional FFmpeg installer is the exception: it intentionally makes network requests to Homebrew and, only when selected, an optional mirror.
+Core preview and local file operations are designed to work offline. The reviewed application sources do not include telemetry, user accounts, analytics, or remote media processing. The optional FFmpeg installer is the exception: it intentionally requests the documented external runtime after a user action.
 
 Custom keyboard bindings are persisted locally in user defaults. Media metadata may be read locally through AVFoundation, ImageIO, or the optional ffprobe process.
 
@@ -79,7 +80,7 @@ Request a focused review before changing any of the following:
 - Finder Service input parsing or the accepted URL types.
 - `NSSavePanel` flow, destination collision checks, temporary-file handling, or source replacement.
 - FFmpeg/ffprobe discovery paths, command arguments, process lifetime, or output parsing.
-- The packaged Homebrew installer, external URLs, mirrors, signing, or notarization behavior.
+- The packaged external-runtime installer, external URLs, fallback rules, signing, or notarization behavior.
 - New network access, privileged operations, persistence, or background execution.
 
 ## Distribution note

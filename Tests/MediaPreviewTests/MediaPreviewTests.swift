@@ -49,6 +49,32 @@ final class MediaPreviewTests: XCTestCase {
         return nil
     }
 
+    private func screenshotFixtureImage(width: Int, height: Int) throws -> CGImage {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: width,
+            pixelsHigh: height,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let bytes = try XCTUnwrap(bitmap.bitmapData)
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = y * bitmap.bytesPerRow + x * 4
+                bytes[offset] = UInt8((x * 31 + y * 17) % 255)
+                bytes[offset + 1] = UInt8((x * 11 + y * 43) % 255)
+                bytes[offset + 2] = UInt8((x * 47 + y * 7) % 255)
+                bytes[offset + 3] = 255
+            }
+        }
+        return try XCTUnwrap(bitmap.cgImage)
+    }
+
     func testLaunchInputParsesFilesystemPath() {
         XCTAssertEqual(
             LaunchInput.mediaURL(from: ["MediaPreview", "/tmp/example movie.mp4"]),
@@ -188,6 +214,8 @@ final class MediaPreviewTests: XCTestCase {
             let volume = try XCTUnwrap(firstDescendant(of: VerticalVolumeControl.self, in: controller.view))
             let mute = try XCTUnwrap(button(titled: "静音", in: controller.view))
             let rotate = try XCTUnwrap(button(titled: "逆90°", in: controller.view))
+            let mirror = try XCTUnwrap(button(titled: "镜像", in: controller.view))
+            let screenshot = try XCTUnwrap(button(titled: "截图", in: controller.view))
             let speed = try XCTUnwrap(button(titled: "8×", in: controller.view))
 
             let rootFrame = root.convert(root.bounds, to: controller.view)
@@ -210,10 +238,13 @@ final class MediaPreviewTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(timelineFrame.minY, rootFrame.minY + 11.5)
             XCTAssertLessThan(timelineFrame.maxY, mediaFrame.minY)
 
-            for control in [volume, mute, rotate, speed] {
+            for control in [volume, mute, rotate, mirror, screenshot, speed] {
                 let point = control.convert(NSPoint(x: control.bounds.midX, y: control.bounds.midY), to: controller.view)
                 XCTAssertTrue(controller.view.hitTest(point) === control, "\(String(describing: control)) must remain hit-testable")
             }
+            let mirrorCenter = mirror.convert(NSPoint(x: mirror.bounds.midX, y: mirror.bounds.midY), to: controller.view)
+            let screenshotCenter = screenshot.convert(NSPoint(x: screenshot.bounds.midX, y: screenshot.bounds.midY), to: controller.view)
+            XCTAssertLessThan(screenshotCenter.y, mirrorCenter.y, "截图 must be the next vertical control below 镜像")
 
             headerHeights.append(headerFrame.height)
             mediaSizes.append(mediaFrame.size)
@@ -299,12 +330,13 @@ final class MediaPreviewTests: XCTestCase {
         let counterclockwise = try XCTUnwrap(button(titled: "逆90°", in: controller.view))
         let clockwise = try XCTUnwrap(button(titled: "顺90°", in: controller.view))
         let mirror = try XCTUnwrap(button(titled: "镜像", in: controller.view))
+        let screenshot = try XCTUnwrap(button(titled: "截图", in: controller.view))
         let transformStack = try XCTUnwrap(counterclockwise.superview as? NSStackView)
         let surface = try XCTUnwrap(firstDescendant(of: ZoomablePlayerSurface.self, in: controller.view))
         let playerView = try XCTUnwrap(firstDescendant(of: AVPlayerView.self, in: controller.view))
         let player = try XCTUnwrap(playerView.player)
 
-        for control in [volume, mute, restart, counterclockwise, clockwise, mirror] {
+        for control in [volume, mute, restart, counterclockwise, clockwise, mirror, screenshot] {
             XCTAssertFalse(control.frame.isEmpty)
             let point = control.convert(NSPoint(x: control.bounds.midX, y: control.bounds.midY), to: controller.view)
             XCTAssertTrue(controller.view.hitTest(point) === control)
@@ -314,6 +346,7 @@ final class MediaPreviewTests: XCTestCase {
         let counterclockwiseCenter = counterclockwise.convert(NSPoint(x: counterclockwise.bounds.midX, y: counterclockwise.bounds.midY), to: controller.view)
         let clockwiseCenter = clockwise.convert(NSPoint(x: clockwise.bounds.midX, y: clockwise.bounds.midY), to: controller.view)
         let mirrorCenter = mirror.convert(NSPoint(x: mirror.bounds.midX, y: mirror.bounds.midY), to: controller.view)
+        let screenshotCenter = screenshot.convert(NSPoint(x: screenshot.bounds.midX, y: screenshot.bounds.midY), to: controller.view)
         let transformStackCenter = transformStack.convert(NSPoint(x: transformStack.bounds.midX, y: transformStack.bounds.midY), to: controller.view)
         let surfaceCenter = surface.convert(NSPoint(x: surface.bounds.midX, y: surface.bounds.midY), to: controller.view)
         XCTAssertFalse(transformStack.frame.isEmpty, "The transform controls must have an arranged, laid-out frame")
@@ -322,6 +355,7 @@ final class MediaPreviewTests: XCTestCase {
         XCTAssertLessThan(transformStackCenter.x, surfaceCenter.x)
         XCTAssertGreaterThan(counterclockwiseCenter.y, clockwiseCenter.y)
         XCTAssertGreaterThan(clockwiseCenter.y, mirrorCenter.y)
+        XCTAssertGreaterThan(mirrorCenter.y, screenshotCenter.y)
         XCTAssertEqual(surface.displayTransform, VideoDisplayTransform())
 
         volume.valueChanged?(0.35)
@@ -369,6 +403,7 @@ final class MediaPreviewTests: XCTestCase {
         XCTAssertNil(button(titled: "逆90°", in: audioOnlyController.view))
         XCTAssertNil(button(titled: "顺90°", in: audioOnlyController.view))
         XCTAssertNil(button(titled: "镜像", in: audioOnlyController.view))
+        XCTAssertNil(button(titled: "截图", in: audioOnlyController.view))
     }
 
     func testVideoLoopDefaultsOnWithoutChangingAudioOrImageDefaults() {
@@ -502,6 +537,79 @@ final class MediaPreviewTests: XCTestCase {
         XCTAssertNil(compressedProperties[kCGImagePropertyOrientation])
     }
 
+    func testVideoScreenshotNamingStartsAt001AndSkipsOccupiedSiblings() {
+        let source = URL(fileURLWithPath: "/tmp/旅行片段.mov")
+        let first = URL(fileURLWithPath: "/tmp/旅行片段-截图-001.jpg")
+        let second = URL(fileURLWithPath: "/tmp/旅行片段-截图-002.jpg")
+
+        XCTAssertEqual(VideoFrameScreenshotSavePlan.candidateURL(for: source, number: 1), first)
+        XCTAssertEqual(
+            VideoFrameScreenshotSavePlan.suggestedSiblingURL(for: source, fileExists: { $0 == first || $0 == second }),
+            URL(fileURLWithPath: "/tmp/旅行片段-截图-003.jpg")
+        )
+    }
+
+    func testVideoScreenshotJPEGIsReadableAtFullTransformedFrameResolution() throws {
+        // AVAssetImageGenerator applies the source preferred orientation before
+        // this exporter sees its CGImage. A 100×60 natural track with that
+        // orientation therefore arrives as 60×100; the user turn swaps it back
+        // to 100×60 without dropping pixels or taking a viewport crop.
+        let preferredSize = VideoDisplayTransform.preferredDisplaySize(
+            naturalSize: CGSize(width: 100, height: 60),
+            preferredTransform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 60, ty: 0)
+        )
+        XCTAssertEqual(preferredSize, CGSize(width: 60, height: 100))
+
+        let data = try VideoFrameScreenshotExporter.jpegData(
+            from: screenshotFixtureImage(width: 60, height: 100),
+            displayTransform: VideoDisplayTransform(quarterTurnsClockwise: 1, isMirrored: true)
+        )
+        try VideoFrameScreenshotExporter.validateJPEG(data, expectedWidth: 100, expectedHeight: 60)
+
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertEqual(CGImageSourceGetType(source) as String?, UTType.jpeg.identifier)
+        XCTAssertEqual(image.width * image.height, 60 * 100)
+        XCTAssertGreaterThanOrEqual(ImageJPEGExporter.conversionQuality, 0.95)
+    }
+
+    func testVideoScreenshotCommitNeverOverwritesSourceOrOccupiedSibling() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory.appendingPathComponent("MediaPreviewTests.VideoScreenshot.\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? fileManager.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("原视频.mov", isDirectory: false)
+        let occupied = directory.appendingPathComponent("原视频-截图-001.jpg", isDirectory: false)
+        let originalSourceData = Data("source movie remains untouched".utf8)
+        let occupiedData = Data("existing screenshot remains untouched".utf8)
+        try originalSourceData.write(to: source)
+        try occupiedData.write(to: occupied)
+
+        let jpegData = try VideoFrameScreenshotExporter.jpegData(
+            from: screenshotFixtureImage(width: 80, height: 48),
+            displayTransform: VideoDisplayTransform()
+        )
+        let output = try VideoFrameScreenshotSavePlan.commitJPEGData(jpegData, beside: source)
+
+        XCTAssertEqual(output.lastPathComponent, "原视频-截图-002.jpg")
+        XCTAssertEqual(try Data(contentsOf: source), originalSourceData)
+        XCTAssertEqual(try Data(contentsOf: occupied), occupiedData)
+        try VideoFrameScreenshotExporter.validateJPEG(try Data(contentsOf: output), expectedWidth: 80, expectedHeight: 48)
+        let names = try fileManager.contentsOfDirectory(atPath: directory.path)
+        XCTAssertFalse(names.contains { $0.hasPrefix(".MediaPreview-Screenshot-") })
+    }
+
+    func testVideoScreenshotCaptureGateRejectsConcurrentRequestUntilFinished() {
+        var gate = VideoFrameScreenshotCaptureGate()
+        XCTAssertTrue(gate.begin())
+        XCTAssertTrue(gate.isPending)
+        XCTAssertFalse(gate.begin())
+        gate.finish()
+        XCTAssertFalse(gate.isPending)
+        XCTAssertTrue(gate.begin())
+    }
+
     func testImageJPEGCompressionRejectsAnImpossibleExclusiveCap() throws {
         let bitmap = try XCTUnwrap(NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -617,6 +725,7 @@ final class MediaPreviewTests: XCTestCase {
         let cropSave = try XCTUnwrap(button(titled: "裁切保存…", in: controller.view))
         let convertJPEG = try XCTUnwrap(button(titled: "转 JPG", in: controller.view))
         let compressJPEG = try XCTUnwrap(button(titled: "压缩图片…", in: controller.view))
+        XCTAssertNil(button(titled: "截图", in: controller.view))
         let surface = try XCTUnwrap(firstDescendant(of: ZoomableImageSurface.self, in: controller.view))
 
         let counterclockwiseCenter = counterclockwise.convert(NSPoint(x: counterclockwise.bounds.midX, y: counterclockwise.bounds.midY), to: controller.view)
@@ -934,11 +1043,25 @@ final class MediaPreviewTests: XCTestCase {
         XCTAssertTrue(ABTrimExportError.audioStreamCopyFailed("muxer does not support codec").localizedDescription.contains("未进行重编码"))
     }
 
-    func testFFmpegLocatorPrioritizesStandardLocationsThenPATHWithoutDuplicates() {
-        let candidates = FFmpegLocator.candidateURLs(environment: ["PATH": "/custom/bin:/opt/homebrew/bin:/custom/bin"])
-        XCTAssertEqual(candidates.first?.path, "/opt/homebrew/bin/ffmpeg")
-        XCTAssertTrue(candidates.contains(URL(fileURLWithPath: "/custom/bin/ffmpeg")))
-        XCTAssertEqual(candidates.filter { $0.path == "/opt/homebrew/bin/ffmpeg" }.count, 1)
+    func testFFmpegAndFFprobeLocatorsPrioritizeUserManagedDirectoryThenStandardAndPATHWithoutDuplicates() {
+        let home = "/Users/example"
+        let managedDirectory = "\(home)/Library/Application Support/Finder Media Preview/bin"
+        let environment = [
+            "HOME": home,
+            "PATH": "/custom/bin:\(managedDirectory):/opt/homebrew/bin:/custom/bin"
+        ]
+
+        let ffmpeg = FFmpegLocator.candidateURLs(environment: environment)
+        XCTAssertEqual(ffmpeg.first?.path, "\(managedDirectory)/ffmpeg")
+        XCTAssertTrue(ffmpeg.contains(URL(fileURLWithPath: "/custom/bin/ffmpeg")))
+        XCTAssertEqual(ffmpeg.filter { $0.path == "\(managedDirectory)/ffmpeg" }.count, 1)
+        XCTAssertEqual(ffmpeg.filter { $0.path == "/opt/homebrew/bin/ffmpeg" }.count, 1)
+
+        let ffprobe = FFprobe.candidateURLs(environment: environment)
+        XCTAssertEqual(ffprobe.first?.path, "\(managedDirectory)/ffprobe")
+        XCTAssertTrue(ffprobe.contains(URL(fileURLWithPath: "/custom/bin/ffprobe")))
+        XCTAssertEqual(ffprobe.filter { $0.path == "\(managedDirectory)/ffprobe" }.count, 1)
+        XCTAssertEqual(ffprobe.filter { $0.path == "/opt/homebrew/bin/ffprobe" }.count, 1)
     }
 
     func testABMarkersRenderIndividuallyBeforeTheRangeIsComplete() {

@@ -1,21 +1,18 @@
 #!/bin/zsh
-# Finder Media Preview's optional FFmpeg installer.
-#
-# This script intentionally uses only Homebrew's official installer.  It does
-# not download a third-party FFmpeg binary or execute a third-party installer.
+# Optional, per-user FFmpeg/ffprobe installer for Finder Media Preview.
+# It intentionally has no Homebrew, npm, sudo, Xcode CLT, or remote-script path.
 
 emulate -LR zsh
 set -euo pipefail
 
-# Pin the official installer to a reviewed upstream commit. Updating this URL
-# requires updating the expected SHA-256 below in the same change.
-readonly OFFICIAL_HOMEBREW_INSTALLER='https://raw.githubusercontent.com/Homebrew/install/cced90146ea6d3057c03a636b668fef177415eb3/install.sh'
-readonly OFFICIAL_HOMEBREW_INSTALLER_SHA256='12479a24be3f5307eecac7cde670fad7118640f031229e964f544b1367b52a41'
-readonly USTC_BOTTLE_DOMAIN='https://mirrors.ustc.edu.cn/homebrew-bottles'
-readonly USTC_API_DOMAIN='https://mirrors.ustc.edu.cn/homebrew-bottles/api'
+readonly VERSION='b6.1.1'
+readonly DOMESTIC_BASE='https://cdn.npmmirror.com/binaries/ffmpeg-static/b6.1.1'
+readonly UPSTREAM_BASE='https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1'
+readonly MANIFEST_NAME='finder-media-preview-ffmpeg-static-manifest.txt'
 
-use_ustc_mirror=0
+source_mode='domestic'
 dry_run=0
+stage_dir=''
 
 log() { print -- "[Finder Media Preview] $*"; }
 warn() { print -u2 -- "[Finder Media Preview] 注意：$*"; }
@@ -23,18 +20,27 @@ fail() { print -u2 -- "[Finder Media Preview] 失败：$*"; exit 1; }
 
 usage() {
   cat <<'EOF'
-用法：install_ffmpeg.sh [--use-ustc-mirror] [--official] [--dry-run]
+用法：安装\ FFmpeg.command [--domestic | --upstream] [--dry-run]
 
-  --use-ustc-mirror  本次 brew install 临时使用中科大 Homebrew bottles 镜像。
-  --official         不使用镜像，全部走 Homebrew 默认官方源。
-  --dry-run          只显示将执行的操作，不下载、不安装。
+  --domestic  默认。先用 npmmirror 国内源；只有连接或 HTTP 失败时才回退到固定 GitHub 上游发布页。
+  --upstream  只用固定 GitHub 上游发布页。
+  --dry-run   只显示会执行的步骤；不联网、不创建目录、不安装文件。
+
+安装位置：${FINDER_MEDIA_PREVIEW_BIN_DIR:-$HOME/Library/Application Support/Finder Media Preview/bin}
 EOF
 }
 
+cleanup() {
+  if [[ -n "$stage_dir" && -d "$stage_dir" ]]; then
+    rm -rf -- "$stage_dir"
+  fi
+}
+trap cleanup EXIT HUP INT TERM
+
 while (( $# )); do
   case "$1" in
-    --use-ustc-mirror) use_ustc_mirror=1 ;;
-    --official) use_ustc_mirror=0 ;;
+    --domestic) source_mode='domestic' ;;
+    --upstream) source_mode='upstream' ;;
     --dry-run) dry_run=1 ;;
     --help|-h) usage; exit 0 ;;
     *) fail "不认识的参数：$1（可用 --help 查看用法）" ;;
@@ -44,127 +50,156 @@ done
 
 [[ "$(uname -s)" == 'Darwin' ]] || fail '此安装脚本仅适用于 macOS。'
 
-run() {
-  if (( dry_run )); then
-    log "演练：$*"
-  else
-    "$@"
-  fi
-}
-
-find_brew() {
-  local candidate
-  if command -v brew >/dev/null 2>&1; then
-    command -v brew
-    return 0
-  fi
-  for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-    if [[ -x "$candidate" ]]; then
-      print -- "$candidate"
-      return 0
+case "$(uname -m)" in
+  arm64) asset_arch='arm64' ;;
+  x86_64)
+    # Rosetta reports x86_64 from uname even on Apple Silicon.  Trust only an
+    # explicit translated-process or ARM-hardware signal; native Intel stays x64.
+    if [[ "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" == '1' ]] || \
+       [[ "$(sysctl -in hw.optional.arm64 2>/dev/null || true)" == '1' ]]; then
+      asset_arch='arm64'
+    else
+      asset_arch='x64'
     fi
-  done
-  return 1
+    ;;
+  *) fail "不支持的 macOS 架构：$(uname -m)（仅支持 arm64 与 x86_64）" ;;
+esac
+
+home_directory="${HOME:-}"
+[[ -n "$home_directory" ]] || fail '没有可用的 HOME，无法确定用户级安装目录。'
+install_dir="${FINDER_MEDIA_PREVIEW_BIN_DIR:-$home_directory/Library/Application Support/Finder Media Preview/bin}"
+[[ -n "$install_dir" ]] || fail '安装目录为空。'
+
+readonly FFMPEG_ASSET="ffmpeg-darwin-${asset_arch}.gz"
+readonly FFPROBE_ASSET="ffprobe-darwin-${asset_arch}.gz"
+
+case "$asset_arch" in
+  arm64)
+    readonly FFMPEG_SHA256='8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa'
+    readonly FFPROBE_SHA256='d986a8ec7b030899fe66a8a288ed809a3543338705a3ce178cfb85869c5d80be'
+    ;;
+  x64)
+    readonly FFMPEG_SHA256='929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106'
+    readonly FFPROBE_SHA256='d4da574d6e2e197bd259b47d69cf262df9e312af24ad960444f6d806d3d4c186'
+    ;;
+esac
+
+download_archive() {
+  local base="$1"
+  local asset="$2"
+  local destination="$3"
+  curl --fail --location --proto '=https' --tlsv1.2 --connect-timeout 20 --retry 1 --retry-delay 1 \
+    --silent --show-error --output "$destination" "${base}/${asset}"
 }
 
-find_ffmpeg() {
-  local candidate
-  if command -v ffmpeg >/dev/null 2>&1; then
-    command -v ffmpeg
-    return 0
-  fi
-  for candidate in /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
-    if [[ -x "$candidate" ]]; then
-      print -- "$candidate"
-      return 0
+verify_gzip_digest() {
+  local archive="$1"
+  local expected="$2"
+  local label="$3"
+  local actual
+  actual="$(shasum -a 256 "$archive" | awk '{print $1}')" || fail "无法计算 ${label} gzip 的 SHA-256。"
+  [[ "$actual" == "$expected" ]] || fail "${label} gzip SHA-256 不匹配（期望 ${expected}，实际 ${actual}）。已取消；校验失败绝不回退到其他源。"
+  print -- "$actual"
+}
+
+typeset -A downloaded_url
+typeset -A downloaded_digest
+
+fetch_and_verify() {
+  local label="$1"
+  local asset="$2"
+  local expected="$3"
+  local archive="$stage_dir/${label}.gz"
+  local base=''
+
+  if [[ "$source_mode" == 'upstream' ]]; then
+    base="$UPSTREAM_BASE"
+    log "下载 ${asset}（固定上游发布页）…"
+    download_archive "$base" "$asset" "$archive" || fail "无法从固定上游发布页下载 ${asset}。"
+  else
+    base="$DOMESTIC_BASE"
+    log "下载 ${asset}（默认国内源）…"
+    if ! download_archive "$base" "$asset" "$archive"; then
+      # A fallback is allowed only for a transport/HTTP failure.  It is
+      # intentionally outside verify_gzip_digest, so a digest mismatch stops.
+      rm -f -- "$archive"
+      warn "国内源连接或 HTTP 请求失败；仅本次回退到固定上游发布页。"
+      base="$UPSTREAM_BASE"
+      download_archive "$base" "$asset" "$archive" || fail "国内源与固定上游发布页都无法下载 ${asset}。"
     fi
-  done
-  return 1
+  fi
+
+  downloaded_url[$label]="${base}/${asset}"
+  downloaded_digest[$label]="$(verify_gzip_digest "$archive" "$expected" "$label")"
+  log "${label} gzip SHA-256 已验证。"
 }
 
-if ffmpeg_path=$(find_ffmpeg); then
-  log "已检测到 FFmpeg：$ffmpeg_path"
-  "$ffmpeg_path" -version 2>/dev/null | head -n 1 || true
-  log '无需重复安装。关闭此窗口即可。'
-  exit 0
-fi
+stage_executable() {
+  local label="$1"
+  local archive="$stage_dir/${label}.gz"
+  local executable="$stage_dir/${label}"
+  gzip -dc -- "$archive" > "$executable" || fail "无法解压 ${label}。"
+  chmod 755 "$executable"
+  "$executable" -version >/dev/null 2>&1 || fail "${label} 不能通过 -version 自检。"
+  log "${label} 可执行文件已通过 -version 自检。"
+}
 
-log '本脚本将通过 Homebrew 安装 FFmpeg。安装过程可能要求输入本机账户密码，并会下载软件包。'
-log '不会修改原始媒体文件；仅安装命令行工具。'
+write_manifest() {
+  cat > "$stage_dir/$MANIFEST_NAME" <<EOF
+Finder Media Preview FFmpeg-static provenance
+version=${VERSION}
+architecture=${asset_arch}
+installed_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+ffmpeg_asset=${FFMPEG_ASSET}
+ffmpeg_source=${downloaded_url[ffmpeg]}
+ffmpeg_gzip_sha256_expected=${FFMPEG_SHA256}
+ffmpeg_gzip_sha256_actual=${downloaded_digest[ffmpeg]}
+ffprobe_asset=${FFPROBE_ASSET}
+ffprobe_source=${downloaded_url[ffprobe]}
+ffprobe_gzip_sha256_expected=${FFPROBE_SHA256}
+ffprobe_gzip_sha256_actual=${downloaded_digest[ffprobe]}
+license=https://github.com/eugeneware/ffmpeg-static/blob/b6.1.1/LICENSE
+EOF
+}
 
-if (( ! dry_run && ! use_ustc_mirror )) && [[ -t 0 ]]; then
-  print -n -- '[Finder Media Preview] 是否本次临时使用中科大 Homebrew bottles 镜像加速下载？[Y/n] '
-  read -r mirror_answer
-  case "${mirror_answer:l}" in
-    ''|y|yes) use_ustc_mirror=1 ;;
-    n|no) ;;
-    *) warn '输入未识别，将使用 Homebrew 默认官方源。' ;;
-  esac
-fi
-
-if ! xcode-select -p >/dev/null 2>&1; then
-  log '未发现 Xcode Command Line Tools，正在请求 macOS 打开安装窗口。'
-  if (( dry_run )); then
-    log '演练：xcode-select --install'
-  else
-    xcode-select --install >/dev/null 2>&1 || true
-    warn '请先在弹出的 macOS 窗口完成“Command Line Tools”安装，然后重新运行本脚本。'
-    exit 0
-  fi
-fi
-
-brew_path=''
-if brew_path=$(find_brew); then
-  log "已检测到 Homebrew：$brew_path"
-else
-  log '未检测到 Homebrew；将从 Homebrew 官方 GitHub 源下载安装脚本。'
-  log "官方来源：$OFFICIAL_HOMEBREW_INSTALLER"
-  if (( dry_run )); then
-    log "演练：下载官方 Homebrew 安装脚本并以 /bin/bash 执行"
-  else
-    installer_file=$(mktemp -t finder-media-preview-homebrew.XXXXXX) || fail '无法创建临时安装文件。'
-    trap 'rm -f -- "$installer_file"' EXIT HUP INT TERM
-    curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --show-error \
-      --output "$installer_file" "$OFFICIAL_HOMEBREW_INSTALLER" || fail '无法从 Homebrew 官方地址下载安装脚本。请检查网络后重试。'
-    [[ -s "$installer_file" ]] || fail 'Homebrew 官方安装脚本为空，已取消。'
-    installer_sha256=$(shasum -a 256 "$installer_file" | awk '{print $1}') || fail '无法计算 Homebrew 安装脚本的 SHA-256，已取消。'
-    [[ "$installer_sha256" == "$OFFICIAL_HOMEBREW_INSTALLER_SHA256" ]] || fail "Homebrew 安装脚本校验失败，已取消（实际：$installer_sha256）。"
-    grep -q 'Homebrew' "$installer_file" || fail '下载内容不是预期的 Homebrew 安装脚本，已取消。'
-    /bin/bash "$installer_file"
-    rm -f -- "$installer_file"
-    trap - EXIT HUP INT TERM
-  fi
-  brew_path=$(find_brew) || fail 'Homebrew 安装结束后仍未找到 brew。请关闭此窗口后重新运行脚本，或按 Homebrew 官方文档完成安装。'
-fi
-
-# The command makes this process see a just-installed brew.  It does not edit
-# the user's shell configuration; Homebrew's own installer handles that choice.
-eval "$(\"$brew_path\" shellenv)"
-log "Homebrew 架构：$("$brew_path" --prefix)"
-
-if (( use_ustc_mirror )); then
-  log '本次仅为 brew install ffmpeg 临时使用中科大 bottles 镜像；不会写入 shell 配置。'
-  export HOMEBREW_BOTTLE_DOMAIN="$USTC_BOTTLE_DOMAIN"
-  brew_major=$("$brew_path" --version | sed -n '1s/^Homebrew \([0-9][0-9]*\).*/\1/p')
-  if [[ -n "$brew_major" && "$brew_major" -ge 4 ]]; then
-    export HOMEBREW_API_DOMAIN="$USTC_API_DOMAIN"
-    log "检测到 Homebrew $brew_major；本次也临时使用 USTC API 镜像。"
-  fi
-else
-  log '使用 Homebrew 默认官方源。'
-fi
-
-log '开始安装 FFmpeg。这一步取决于网络和系统，可能需要几分钟。'
-run "$brew_path" install ffmpeg
-
-unset HOMEBREW_BOTTLE_DOMAIN HOMEBREW_API_DOMAIN
+replace_staged_files() {
+  local item
+  for item in ffmpeg ffprobe "$MANIFEST_NAME"; do
+    [[ ! -d "$install_dir/$item" ]] || fail "目标路径是目录，拒绝替换：$install_dir/$item"
+  done
+  for item in ffmpeg ffprobe "$MANIFEST_NAME"; do
+    mv -f -- "$stage_dir/$item" "$install_dir/$item" || fail "无法替换 $install_dir/$item。旧文件可能仍可用；请检查目录权限后重试。"
+  done
+}
 
 if (( dry_run )); then
-  log '演练完成：未安装任何软件。'
+  log '演练模式：不联网、不创建目录、不安装文件。'
+  log "架构：${asset_arch}；版本：${VERSION}"
+  if [[ "$source_mode" == 'upstream' ]]; then
+    log "将从固定上游下载：${UPSTREAM_BASE}/{${FFMPEG_ASSET},${FFPROBE_ASSET}}"
+  else
+    log "将优先从国内源下载：${DOMESTIC_BASE}/{${FFMPEG_ASSET},${FFPROBE_ASSET}}"
+    log "只有连接或 HTTP 失败时才回退到：${UPSTREAM_BASE}"
+  fi
+  log "将验证两个 gzip SHA-256、解压并运行 -version，然后安装到：${install_dir}"
+  log "不会使用 Homebrew、npm、sudo、Xcode Command Line Tools 或远程脚本。"
   exit 0
 fi
 
-ffmpeg_path=$(find_ffmpeg) || fail 'brew 已完成，但没有找到 ffmpeg。请执行 brew doctor 后重新运行本脚本。'
-log "FFmpeg 安装完成：$ffmpeg_path"
-"$ffmpeg_path" -version 2>/dev/null | head -n 1 || true
-log '现在可重新打开 Finder Media Preview，使用 A/B 裁切导出视频或音频。'
+mkdir -p -- "$install_dir" || fail "无法创建用户级安装目录：$install_dir"
+[[ -w "$install_dir" ]] || fail "安装目录不可写：$install_dir"
+stage_dir="$(mktemp -d "${install_dir}/.finder-media-preview-ffmpeg-stage.XXXXXX")" || fail '无法创建安装暂存目录。'
+
+log "安装 FFmpeg-static ${VERSION}（${asset_arch}）到用户目录；不会请求管理员密码。"
+fetch_and_verify ffmpeg "$FFMPEG_ASSET" "$FFMPEG_SHA256"
+fetch_and_verify ffprobe "$FFPROBE_ASSET" "$FFPROBE_SHA256"
+stage_executable ffmpeg
+stage_executable ffprobe
+write_manifest
+replace_staged_files
+
+"$install_dir/ffmpeg" -version >/dev/null 2>&1 || fail '安装后的 ffmpeg 未通过 -version 自检。'
+"$install_dir/ffprobe" -version >/dev/null 2>&1 || fail '安装后的 ffprobe 未通过 -version 自检。'
+log "安装完成：$install_dir/ffmpeg 与 $install_dir/ffprobe"
+log "来源与 SHA-256 记录：$install_dir/$MANIFEST_NAME"
+log '请重新打开 Finder Media Preview；它会优先查找此用户级目录。'

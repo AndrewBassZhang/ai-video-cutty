@@ -10,6 +10,128 @@ struct MediaMetadata: Equatable, Sendable {
     static let empty = MediaMetadata(row1: [], row2: [])
 }
 
+/// Metadata is deliberately presented in monotonic stages.  A slower basic
+/// inspection must never replace a richer result that is already on screen.
+enum MediaMetadataStage: Int, Comparable, Sendable {
+    case provisional
+    case native
+    case enriched
+
+    static func < (lhs: MediaMetadataStage, rhs: MediaMetadataStage) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+struct MediaMetadataUpdate: Equatable, Sendable {
+    let stage: MediaMetadataStage
+    let metadata: MediaMetadata
+}
+
+/// A generation token lets the controller reject callbacks that belong to a
+/// torn-down (or replaced) inspection without relying on callback timing.
+struct MetadataInspectionToken: Sendable {
+    private(set) var generation: UInt = 0
+
+    mutating func begin() -> UInt {
+        generation &+= 1
+        return generation
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+    }
+
+    func accepts(_ candidate: UInt) -> Bool {
+        candidate == generation
+    }
+}
+
+/// Pure state machine used by the controller and tests. Native and FFprobe
+/// inspections run concurrently; each result may only advance the visible
+/// stage. A valid enriched result can advance directly from the placeholder so
+/// a stalled native request never holds useful metadata hostage.
+struct MetadataProgression: Sendable {
+    private(set) var stage: MediaMetadataStage = .provisional
+    private(set) var metadata: MediaMetadata
+
+    init(provisional: MediaMetadata) {
+        metadata = Self.compact(
+            provisional,
+            fallbackRow1: "MEDIA",
+            fallbackRow2: "正在读取媒体信息…"
+        )
+    }
+
+    static func provisional(fileExtension: String, fallbackType: String, fileSize: Int64?) -> MediaMetadata {
+        let trimmedExtension = fileExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        let type = trimmedExtension.isEmpty
+            ? (fallbackType.isEmpty ? "MEDIA" : fallbackType.uppercased())
+            : trimmedExtension.uppercased()
+        return MediaMetadata(
+            row1: [type, MetadataFormatter.fileSize(fileSize)].compactMap { $0 },
+            row2: ["正在读取媒体信息…"]
+        )
+    }
+
+    /// Publishes the basic AVFoundation result once, unless richer metadata is
+    /// already visible.
+    mutating func receiveNative(_ native: MediaMetadata) -> [MediaMetadataUpdate] {
+        guard stage == .provisional else { return [] }
+        let nativeMetadata = Self.compact(
+            native,
+            fallbackRow1: metadata.row1.first ?? "MEDIA",
+            fallbackRow2: "原生媒体信息"
+        )
+        stage = .native
+        metadata = nativeMetadata
+        return [MediaMetadataUpdate(stage: .native, metadata: nativeMetadata)]
+    }
+
+    /// Accepts only a successful, substantive FFprobe response.  Failed,
+    /// timed-out, missing, and empty responses intentionally leave native data
+    /// untouched.
+    mutating func receiveFFprobe(_ result: Result<MediaMetadata, MetadataError>) -> [MediaMetadataUpdate] {
+        guard case let .success(enriched) = result, Self.isSubstantive(enriched) else { return [] }
+        return receiveEnriched(enriched)
+    }
+
+    private mutating func receiveEnriched(_ enriched: MediaMetadata) -> [MediaMetadataUpdate] {
+        switch stage {
+        case .provisional:
+            let enrichedMetadata = Self.compact(
+                enriched,
+                fallbackRow1: metadata.row1.first ?? "MEDIA",
+                fallbackRow2: "扩展媒体信息"
+            )
+            stage = .enriched
+            metadata = enrichedMetadata
+            return [MediaMetadataUpdate(stage: .enriched, metadata: enrichedMetadata)]
+        case .native:
+            let enrichedMetadata = Self.compact(
+                enriched,
+                fallbackRow1: metadata.row1.first ?? "MEDIA",
+                fallbackRow2: "扩展媒体信息"
+            )
+            stage = .enriched
+            metadata = enrichedMetadata
+            return [MediaMetadataUpdate(stage: .enriched, metadata: enrichedMetadata)]
+        case .enriched:
+            return []
+        }
+    }
+
+    private static func isSubstantive(_ metadata: MediaMetadata) -> Bool {
+        !metadata.row2.isEmpty || metadata.row1.count > 1
+    }
+
+    private static func compact(_ metadata: MediaMetadata, fallbackRow1: String, fallbackRow2: String) -> MediaMetadata {
+        MediaMetadata(
+            row1: metadata.row1.isEmpty ? [fallbackRow1] : metadata.row1,
+            row2: metadata.row2.isEmpty ? [fallbackRow2] : metadata.row2
+        )
+    }
+}
+
 enum MetadataFormatter {
     static func bitDepth(from pixelFormat: String?, fallback: String? = nil) -> String? {
         if let fallback, let depth = Int(fallback), depth > 0 { return "\(depth)-bit" }
@@ -265,4 +387,19 @@ enum NativeMediaMetadata {
         let text = String(bytes: bytes, encoding: .macOSRoman)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return text.isEmpty ? String(format: "0x%08X", value) : text
     }
+}
+
+/// The controller receives these operations as a value so stage behavior can
+/// be exercised without launching a process or waiting on real media I/O.
+struct MediaMetadataInspector: Sendable {
+    typealias NativeInspector = @Sendable (URL) async -> MediaMetadata
+    typealias EnrichedInspector = @Sendable (URL, @escaping @Sendable (Result<MediaMetadata, MetadataError>) -> Void) -> Void
+
+    let inspectNative: NativeInspector
+    let inspectEnriched: EnrichedInspector
+
+    static let live = MediaMetadataInspector(
+        inspectNative: { url in await NativeMediaMetadata.inspect(url: url) },
+        inspectEnriched: { url, completion in FFprobe.inspect(url: url, completion: completion) }
+    )
 }

@@ -33,7 +33,7 @@ final class MediaPreviewTests: XCTestCase {
 
     @MainActor
     private func button(titled title: String, in view: NSView) -> NSButton? {
-        if let button = view as? NSButton, button.title == title { return button }
+        if let button = view as? NSButton, button.title == title || button.accessibilityLabel() == title { return button }
         for subview in view.subviews {
             if let match = button(titled: title, in: subview) { return match }
         }
@@ -255,6 +255,83 @@ final class MediaPreviewTests: XCTestCase {
         XCTAssertGreaterThan(mediaSizes[1].height, mediaSizes[0].height)
         XCTAssertGreaterThan(surfaceSizes[1].width, surfaceSizes[0].width)
         XCTAssertGreaterThan(surfaceSizes[1].height, surfaceSizes[0].height)
+    }
+
+    @MainActor
+    func testVideoViewportCentersBetweenEqualControlRailsWithCompactTransformButtons() throws {
+        let contentSizes = [
+            CGSize(width: 1_306, height: 700),
+            CGSize(width: 1_920, height: 1_080)
+        ]
+        let transformTitles = ["逆90°", "顺90°", "镜像", "截图"]
+
+        for contentSize in contentSizes {
+            let controller = PreviewController(url: URL(fileURLWithPath: "/tmp/example.mp4"), mediaKind: .video)
+            controller.loadViewIfNeeded()
+            controller.view.frame = NSRect(origin: .zero, size: contentSize)
+            controller.view.layoutSubtreeIfNeeded()
+
+            let root = try XCTUnwrap(identifier("preview-root", in: controller.view))
+            let mediaRow = try XCTUnwrap(identifier("preview-media-row", in: controller.view))
+            let leftRail = try XCTUnwrap(identifier("preview-left-control-rail", in: controller.view))
+            let rightRail = try XCTUnwrap(identifier("preview-right-control-rail", in: controller.view))
+            let surface = try XCTUnwrap(firstDescendant(of: ZoomablePlayerSurface.self, in: controller.view))
+            let controls = try transformTitles.map { try XCTUnwrap(button(titled: $0, in: controller.view)) }
+
+            let rootFrame = root.convert(root.bounds, to: controller.view)
+            let mediaFrame = mediaRow.convert(mediaRow.bounds, to: controller.view)
+            let leftRailFrame = leftRail.convert(leftRail.bounds, to: controller.view)
+            let rightRailFrame = rightRail.convert(rightRail.bounds, to: controller.view)
+            let surfaceFrame = surface.convert(surface.bounds, to: controller.view)
+
+            XCTAssertEqual(surfaceFrame.midX, rootFrame.midX, accuracy: 0.5)
+            XCTAssertEqual(surfaceFrame.midX, mediaFrame.midX, accuracy: 0.5)
+            XCTAssertEqual(leftRailFrame.width, rightRailFrame.width, accuracy: 0.5)
+            XCTAssertEqual(surfaceFrame.minY, mediaFrame.minY, accuracy: 0.5)
+            XCTAssertEqual(surfaceFrame.maxY, mediaFrame.maxY, accuracy: 0.5)
+            XCTAssertEqual(surfaceFrame.minX - leftRailFrame.maxX, 12, accuracy: 0.5)
+            XCTAssertEqual(rightRailFrame.minX - surfaceFrame.maxX, 12, accuracy: 0.5)
+            XCTAssertFalse(leftRail.hasAmbiguousLayout)
+            XCTAssertFalse(surface.hasAmbiguousLayout)
+            XCTAssertFalse(rightRail.hasAmbiguousLayout)
+
+            for frame in [leftRailFrame, surfaceFrame, rightRailFrame] {
+                XCTAssertGreaterThanOrEqual(frame.minX, mediaFrame.minX - 0.5)
+                XCTAssertLessThanOrEqual(frame.maxX, mediaFrame.maxX + 0.5)
+                XCTAssertGreaterThanOrEqual(frame.minY, mediaFrame.minY - 0.5)
+                XCTAssertLessThanOrEqual(frame.maxY, mediaFrame.maxY + 0.5)
+            }
+
+            for (button, title) in zip(controls, transformTitles) {
+                XCTAssertEqual(button.toolTip, title)
+                XCTAssertEqual(button.accessibilityLabel(), title)
+                XCTAssertEqual(button.frame.width, 46, accuracy: 0.5)
+                XCTAssertEqual(button.frame.height, 46, accuracy: 0.5)
+                XCTAssertEqual(button.frame.width, button.frame.height, accuracy: 0.5)
+                if button.image != nil {
+                    XCTAssertTrue(button.title.isEmpty)
+                    XCTAssertEqual(button.imagePosition, .imageOnly)
+                } else {
+                    XCTAssertEqual(button.title, title)
+                    XCTAssertEqual(button.imagePosition, .noImage)
+                }
+                let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: controller.view)
+                XCTAssertTrue(controller.view.hitTest(point) === button, "\(title) must remain hit-testable")
+            }
+
+            let centers = controls.map { $0.convert(NSPoint(x: $0.bounds.midX, y: $0.bounds.midY), to: controller.view) }
+            XCTAssertGreaterThan(centers[0].y, centers[1].y)
+            XCTAssertGreaterThan(centers[1].y, centers[2].y)
+            XCTAssertGreaterThan(centers[2].y, centers[3].y)
+        }
+
+        let imageController = PreviewController(url: URL(fileURLWithPath: "/tmp/example.jpg"), mediaKind: .image)
+        imageController.loadViewIfNeeded()
+        XCTAssertNil(button(titled: "截图", in: imageController.view))
+
+        let audioController = PreviewController(url: URL(fileURLWithPath: "/tmp/example.m4a"), mediaKind: .audio)
+        audioController.loadViewIfNeeded()
+        XCTAssertNil(button(titled: "截图", in: audioController.view))
     }
 
     @MainActor

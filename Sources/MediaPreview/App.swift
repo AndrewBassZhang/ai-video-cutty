@@ -214,6 +214,17 @@ enum LaunchInput {
 
 enum MediaKind: Equatable { case video, audio, image, unsupported }
 
+private extension MediaKind {
+    var provisionalMetadataType: String {
+        switch self {
+        case .video: return "VIDEO"
+        case .audio: return "AUDIO"
+        case .image: return "IMAGE"
+        case .unsupported: return "MEDIA"
+        }
+    }
+}
+
 enum MediaRoute {
     static func kind(for url: URL) -> MediaKind {
         guard url.isFileURL else { return .unsupported }
@@ -1380,7 +1391,7 @@ private final class ImageCompressionSavePanelAccessory: NSObject, NSTextFieldDel
 
 @MainActor
 final class PreviewController: NSViewController {
-    private let url: URL; private let mediaKind: MediaKind; private let player = AVPlayer(); private let videoSurface = ZoomablePlayerSurface(); private var playerView: AVPlayerView { videoSurface.playerView }; private let imageSurface = ZoomableImageSurface(); private var imageView: NSImageView { imageSurface.imageView }
+    private let url: URL; private let mediaKind: MediaKind; private let metadataInspector: MediaMetadataInspector?; private let player = AVPlayer(); private let videoSurface = ZoomablePlayerSurface(); private var playerView: AVPlayerView { videoSurface.playerView }; private let imageSurface = ZoomableImageSurface(); private var imageView: NSImageView { imageSurface.imageView }
     private let metadataStack = NSStackView()
     private let row1 = NSStackView(); private let row2 = NSStackView(); private let mediaRow = NSStackView(); private let volumeStack = NSStackView(); private let displayTransformStack = NSStackView(); private let rotateCounterclockwiseButton = NSButton(); private let rotateClockwiseButton = NSButton(); private let mirrorButton = NSButton(); private let imageActionStack = NSStackView(); private let imageCropSaveButton = NSButton(); private let imageJPEGConversionButton = NSButton(); private let imageJPEGCompressionButton = NSButton(); private let speedStack = NSStackView(); private let timeline = TimelineView(); private let timeLabel = NSTextField(labelWithString: ""); private let loopButton = NSButton(); private let trimExportButton = NSButton(); private let audioExportButton = NSButton(); private let trimExportStatus = NSTextField(labelWithString: ""); private let trimExportProgress = NSProgressIndicator(); private let cancelExportButton = NSButton(); private let muteButton = NSButton(); private let volumeControl = VerticalVolumeControl(); private let topActionStack = NSStackView(); private let filenameLabel = NSTextField(wrappingLabelWithString: "")
     private var imageGenerator: AVAssetImageGenerator?; private var cropPreviewGenerator: AVAssetImageGenerator?; private var cropPreviewGenerationID = 0; private var cropPreviewCompletion: ((NSImage?) -> Void)?; private var timeObserver: Any?; private var endObserver: NSObjectProtocol?; private var hoverWorkItem: DispatchWorkItem?; private var waveformExtraction: WaveformExtraction?
@@ -1389,12 +1400,32 @@ final class PreviewController: NSViewController {
     private var speedButtons: [NSButton] = []; private var ffmpegExportProcess: FFmpegTrimProcess?; private var isPreparingExport = false; private var activeExportIsAudio = false; private var isCancellingExport = false; private var cropEditor: CropEditorSheetController?; private var imageCropEditor: CropEditorSheetController?; private var savedVideoCropSelection: VideoCropSelection?; private var savedImageCropSelection: VideoCropSelection?; private var imageSourceCGImage: CGImage?; private var imageSourceType: CFString?; private var imageSourceProperties: [CFString: Any]?
     private var metadataRowHeightConstraints: [NSLayoutConstraint] = []
     private var metadataHeightConstraint: NSLayoutConstraint?
+    private var metadataProgression: MetadataProgression
+    private var metadataInspectionToken = MetadataInspectionToken()
+    private var nativeMetadataTask: Task<Void, Never>?
+    private var imageLoadPending = false
     var onShowShortcutSettings: (() -> Void)?
 
-    init(url: URL, mediaKind: MediaKind) { self.url = url; self.mediaKind = mediaKind; self.loopEnabled = PlaybackLoopPolicy.defaultLoopEnabled(for: mediaKind); super.init(nibName: nil, bundle: nil) }
+    init(url: URL, mediaKind: MediaKind, metadataInspector: MediaMetadataInspector? = .live) {
+        let resourceValues = try? url.resourceValues(forKeys: [.fileSizeKey])
+        let fileSize = resourceValues?.fileSize.map(Int64.init)
+        self.url = url
+        self.mediaKind = mediaKind
+        self.metadataInspector = metadataInspector
+        self.metadataProgression = MetadataProgression(
+            provisional: MetadataProgression.provisional(
+                fileExtension: url.pathExtension,
+                fallbackType: mediaKind.provisionalMetadataType,
+                fileSize: fileSize
+            )
+        )
+        self.loopEnabled = PlaybackLoopPolicy.defaultLoopEnabled(for: mediaKind)
+        super.init(nibName: nil, bundle: nil)
+    }
     required init?(coder: NSCoder) { nil }
     override func loadView() { view = NSView() }
     override func viewDidLoad() { super.viewDidLoad(); configureUI(); loadMedia() }
+    override func viewDidAppear() { super.viewDidAppear(); beginPendingImageLoad() }
 
     private func configureUI() {
         let root = NSStackView(); root.identifier = NSUserInterfaceItemIdentifier("preview-root"); root.orientation = .vertical; root.alignment = .centerX; root.distribution = .fill; root.spacing = 8; root.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14); root.translatesAutoresizingMaskIntoConstraints = false
@@ -1408,7 +1439,8 @@ final class PreviewController: NSViewController {
         metadataStack.spacing = 2
         metadataStack.setContentHuggingPriority(.required, for: .vertical)
         metadataStack.setContentCompressionResistancePriority(.required, for: .vertical)
-        [row1, row2].forEach { row in
+        [(row1, "preview-metadata-row-1"), (row2, "preview-metadata-row-2")].forEach { row, identifier in
+            row.identifier = NSUserInterfaceItemIdentifier(identifier)
             row.orientation = .horizontal
             row.spacing = 12
             row.alignment = .centerY
@@ -1419,7 +1451,7 @@ final class PreviewController: NSViewController {
             metadataStack.addArrangedSubview(row)
         }
         root.addArrangedSubview(metadataStack)
-        updateMetadataLayout()
+        setMetadata(metadataProgression.metadata)
         switch mediaKind {
         case .image:
             imageView.imageScaling = .scaleProportionallyUpOrDown; imageView.imageAlignment = .alignCenter
@@ -2088,7 +2120,7 @@ final class PreviewController: NSViewController {
     @objc private func showShortcutSettings(_ sender: Any?) { onShowShortcutSettings?() }
 
     private func loadMedia() {
-        guard mediaKind != .image else { loadImage(); return }
+        guard mediaKind != .image else { imageLoadPending = true; return }
         let item = AVPlayerItem(url: url); player.replaceCurrentItem(with: item); player.seek(to: .zero); playerView.player = player
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             // The observer is explicitly delivered on the main queue. Do not
@@ -2103,17 +2135,7 @@ final class PreviewController: NSViewController {
             // requesting exact loop seeks after the player has been rewound.
             MainActor.assumeIsolated { self?.updatePlayback(time) }
         }
-        FFprobe.inspect(url: url) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if let metadata = try? result.get() { self.setMetadata(metadata); return }
-                Task { [weak self, mediaURL = self.url] in
-                    let metadata = await NativeMediaMetadata.inspect(url: mediaURL)
-                    guard let self, self.url == mediaURL else { return }
-                    self.setMetadata(metadata)
-                }
-            }
-        }
+        beginMetadataInspection()
         if mediaKind == .audio { startWaveformExtraction() }
         Task { [weak self] in
             guard let self, let currentItem = self.player.currentItem else { return }
@@ -2138,12 +2160,40 @@ final class PreviewController: NSViewController {
         guard let preview = ImagePreview.load(url: url) else { return }
         imageView.image = preview.image
         imageSurface.setDisplayTransform(imageDisplayTransform)
-        setMetadata(preview.metadata)
+        applyMetadataUpdates(metadataProgression.receiveNative(preview.metadata))
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
         imageSourceCGImage = image
         imageSourceType = CGImageSourceGetType(source)
         imageSourceProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+    }
+
+    private func beginPendingImageLoad() {
+        guard imageLoadPending else { return }
+        imageLoadPending = false
+        loadImage()
+    }
+
+    private func beginMetadataInspection() {
+        guard let metadataInspector else { return }
+        let mediaURL = url
+        nativeMetadataTask?.cancel()
+        let token = metadataInspectionToken.begin()
+        nativeMetadataTask = Task { [weak self, mediaURL, token] in
+            let metadata = await metadataInspector.inspectNative(mediaURL)
+            guard !Task.isCancelled, let self, self.metadataInspectionToken.accepts(token), self.url == mediaURL else { return }
+            self.applyMetadataUpdates(self.metadataProgression.receiveNative(metadata))
+        }
+        metadataInspector.inspectEnriched(mediaURL) { [weak self, mediaURL, token] result in
+            Task { @MainActor [weak self] in
+                guard let self, self.metadataInspectionToken.accepts(token), self.url == mediaURL else { return }
+                self.applyMetadataUpdates(self.metadataProgression.receiveFFprobe(result))
+            }
+        }
+    }
+
+    private func applyMetadataUpdates(_ updates: [MediaMetadataUpdate]) {
+        for update in updates { setMetadata(update.metadata) }
     }
 
     private func setMetadata(_ metadata: MediaMetadata) { setMetadataRows(metadata.row1, metadata.row2) }
@@ -2580,5 +2630,5 @@ final class PreviewController: NSViewController {
         guard duration.isFinite, duration > 0 else { return }
         performExactLoopSeek(to: ABLoopMath.endTarget(a: markers.pointA, b: markers.pointB, duration: duration), resumeRate: chosenForwardRate)
     }
-    func tearDown() { cancelLoopSeek(); hoverWorkItem?.cancel(); waveformExtraction?.cancel(); waveformExtraction = nil; imageGenerator?.cancelAllCGImageGeneration(); imageGenerator = nil; cropPreviewGenerator?.cancelAllCGImageGeneration(); cropPreviewGenerator = nil; cropPreviewGenerationID += 1; cropPreviewCompletion = nil; cropEditor = nil; imageCropEditor = nil; imageSourceCGImage = nil; imageSourceType = nil; imageSourceProperties = nil; ffmpegExportProcess?.cancel(); ffmpegExportProcess = nil; isPreparingExport = false; isCancellingExport = false; resetVideoExportProgress(); if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }; if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }; player.pause(); player.replaceCurrentItem(with: nil) }
+    func tearDown() { metadataInspectionToken.invalidate(); nativeMetadataTask?.cancel(); nativeMetadataTask = nil; imageLoadPending = false; cancelLoopSeek(); hoverWorkItem?.cancel(); waveformExtraction?.cancel(); waveformExtraction = nil; imageGenerator?.cancelAllCGImageGeneration(); imageGenerator = nil; cropPreviewGenerator?.cancelAllCGImageGeneration(); cropPreviewGenerator = nil; cropPreviewGenerationID += 1; cropPreviewCompletion = nil; cropEditor = nil; imageCropEditor = nil; imageSourceCGImage = nil; imageSourceType = nil; imageSourceProperties = nil; ffmpegExportProcess?.cancel(); ffmpegExportProcess = nil; isPreparingExport = false; isCancellingExport = false; resetVideoExportProgress(); if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }; if let endObserver { NotificationCenter.default.removeObserver(endObserver); self.endObserver = nil }; player.pause(); player.replaceCurrentItem(with: nil) }
 }

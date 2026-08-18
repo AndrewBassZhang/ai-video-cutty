@@ -1318,4 +1318,95 @@ final class MediaPreviewTests: XCTestCase {
         let tallCrop = ThumbnailCropMath.sourceCrop(imageSize: CGSize(width: 1000, height: 2000), filling: CGSize(width: 16, height: 9))
         XCTAssertEqual(tallCrop, CGRect(x: 0, y: 718.75, width: 1000, height: 562.5))
     }
+
+    func testProvisionalMetadataUsesExtensionFallbackAndChineseLoadingRow() {
+        XCTAssertEqual(
+            MetadataProgression.provisional(fileExtension: "", fallbackType: "video", fileSize: nil),
+            MediaMetadata(row1: ["VIDEO"], row2: ["正在读取媒体信息…"])
+        )
+
+        let withExtension = MetadataProgression.provisional(fileExtension: "mov", fallbackType: "video", fileSize: 1_024)
+        XCTAssertEqual(withExtension.row1.first, "MOV")
+        XCTAssertEqual(withExtension.row1.count, 2)
+        XCTAssertEqual(withExtension.row2, ["正在读取媒体信息…"])
+    }
+
+    func testMetadataProgressionIsMonotonicAndFFprobeFailureKeepsNative() {
+        let provisional = MetadataProgression.provisional(fileExtension: "mp4", fallbackType: "VIDEO", fileSize: nil)
+        let native = MediaMetadata(row1: ["MP4", "00:02"], row2: ["H.264"])
+        let enriched = MediaMetadata(row1: ["MP4", "00:02", "1920×1080"], row2: ["H.264", "10-bit"])
+        var progression = MetadataProgression(provisional: provisional)
+
+        XCTAssertEqual(progression.receiveNative(native).map(\.stage), [.native])
+        let visibleNative = progression.metadata
+        XCTAssertEqual(progression.receiveFFprobe(.failure(.unavailable)), [])
+        XCTAssertEqual(progression.metadata, visibleNative)
+        XCTAssertEqual(progression.receiveFFprobe(.success(enriched)).map(\.stage), [.enriched])
+        XCTAssertEqual(progression.metadata, enriched)
+        XCTAssertEqual(progression.receiveNative(MediaMetadata(row1: ["OLD"], row2: ["OLD"])), [])
+    }
+
+    func testMetadataProgressionLetsEarlyEnrichedResultWinWithoutWaitingForNative() {
+        var progression = MetadataProgression(
+            provisional: MetadataProgression.provisional(fileExtension: "m4a", fallbackType: "AUDIO", fileSize: nil)
+        )
+        let enriched = MediaMetadata(row1: ["M4A", "00:03"], row2: ["AAC"])
+
+        XCTAssertEqual(progression.receiveFFprobe(.success(enriched)).map(\.stage), [.enriched])
+        XCTAssertEqual(progression.stage, .enriched)
+        XCTAssertEqual(progression.metadata, enriched)
+        XCTAssertEqual(progression.receiveNative(MediaMetadata(row1: ["M4A"], row2: ["Native"])), [])
+    }
+
+    func testMetadataInspectionTokenRejectsLateCallbacksAfterInvalidation() {
+        var token = MetadataInspectionToken()
+        let first = token.begin()
+        XCTAssertTrue(token.accepts(first))
+        token.invalidate()
+        XCTAssertFalse(token.accepts(first))
+        let second = token.begin()
+        XCTAssertTrue(token.accepts(second))
+        XCTAssertNotEqual(first, second)
+    }
+
+    @MainActor
+    func testProvisionalMetadataHeaderIsVisibleAndCompactOnFirstLayout() throws {
+        let controller = PreviewController(
+            url: URL(fileURLWithPath: "/tmp/provisional-preview.mp4"),
+            mediaKind: .video,
+            metadataInspector: nil
+        )
+        defer { controller.tearDown() }
+        controller.loadViewIfNeeded()
+        controller.view.frame = NSRect(x: 0, y: 0, width: 960, height: 680)
+        controller.view.layoutSubtreeIfNeeded()
+
+        let metadata = try XCTUnwrap(identifier("preview-metadata-stack", in: controller.view) as? NSStackView)
+        let firstRow = try XCTUnwrap(identifier("preview-metadata-row-1", in: controller.view) as? NSStackView)
+        let secondRow = try XCTUnwrap(identifier("preview-metadata-row-2", in: controller.view) as? NSStackView)
+        XCTAssertFalse(firstRow.isHidden)
+        XCTAssertFalse(secondRow.isHidden)
+        XCTAssertEqual(firstRow.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }, ["MP4"])
+        XCTAssertEqual(secondRow.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }, ["正在读取媒体信息…"])
+        XCTAssertGreaterThan(metadata.frame.height, 0)
+        XCTAssertLessThan(metadata.frame.height, 50)
+    }
+
+    @MainActor
+    func testImagePlaceholderSurvivesFailedImageIOLoad() throws {
+        let controller = PreviewController(
+            url: URL(fileURLWithPath: "/tmp/missing-provisional-image.jpeg"),
+            mediaKind: .image,
+            metadataInspector: nil
+        )
+        defer { controller.tearDown() }
+        controller.loadViewIfNeeded()
+        controller.view.frame = NSRect(x: 0, y: 0, width: 960, height: 680)
+        controller.view.layoutSubtreeIfNeeded()
+
+        let secondRow = try XCTUnwrap(identifier("preview-metadata-row-2", in: controller.view) as? NSStackView)
+        XCTAssertEqual(secondRow.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }, ["正在读取媒体信息…"])
+        controller.viewDidAppear()
+        XCTAssertEqual(secondRow.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }, ["正在读取媒体信息…"])
+    }
 }

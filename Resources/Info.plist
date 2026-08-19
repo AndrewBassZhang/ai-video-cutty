@@ -9,7 +9,9 @@
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleName</key>
-    <string>Media Preview</string>
+    <string>AI Video Cutty</string>
+    <key>CFBundleDisplayName</key>
+    <string>AI Video Cutty</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -26,7 +28,7 @@
             <key>NSMenuItem</key>
             <dict>
                 <key>default</key>
-                <string>显示媒体预览</string>
+                <string>显示 AI Video Cutty</string>
             </dict>
             <key>NSKeyEquivalent</key>
             <dict>

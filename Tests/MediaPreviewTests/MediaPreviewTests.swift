@@ -1221,24 +1221,29 @@ final class MediaPreviewTests: XCTestCase {
         XCTAssertTrue(ABTrimExportError.audioStreamCopyFailed("muxer does not support codec").localizedDescription.contains("未进行重编码"))
     }
 
-    func testFFmpegAndFFprobeLocatorsPrioritizeUserManagedDirectoryThenStandardAndPATHWithoutDuplicates() {
+    func testFFmpegAndFFprobeLocatorsPrioritizeCurrentThenLegacyUserManagedDirectoriesBeforeStandardAndPATHWithoutDuplicates() {
         let home = "/Users/example"
-        let managedDirectory = "\(home)/Library/Application Support/Finder Media Preview/bin"
+        let managedDirectory = "\(home)/Library/Application Support/AI Video Cutty/bin"
+        let legacyManagedDirectory = "\(home)/Library/Application Support/Finder Media Preview/bin"
         let environment = [
             "HOME": home,
-            "PATH": "/custom/bin:\(managedDirectory):/opt/homebrew/bin:/custom/bin"
+            "PATH": "/custom/bin:\(legacyManagedDirectory):\(managedDirectory):/opt/homebrew/bin:/custom/bin"
         ]
 
         let ffmpeg = FFmpegLocator.candidateURLs(environment: environment)
         XCTAssertEqual(ffmpeg.first?.path, "\(managedDirectory)/ffmpeg")
+        XCTAssertEqual(ffmpeg.dropFirst().first?.path, "\(legacyManagedDirectory)/ffmpeg")
         XCTAssertTrue(ffmpeg.contains(URL(fileURLWithPath: "/custom/bin/ffmpeg")))
         XCTAssertEqual(ffmpeg.filter { $0.path == "\(managedDirectory)/ffmpeg" }.count, 1)
+        XCTAssertEqual(ffmpeg.filter { $0.path == "\(legacyManagedDirectory)/ffmpeg" }.count, 1)
         XCTAssertEqual(ffmpeg.filter { $0.path == "/opt/homebrew/bin/ffmpeg" }.count, 1)
 
         let ffprobe = FFprobe.candidateURLs(environment: environment)
         XCTAssertEqual(ffprobe.first?.path, "\(managedDirectory)/ffprobe")
+        XCTAssertEqual(ffprobe.dropFirst().first?.path, "\(legacyManagedDirectory)/ffprobe")
         XCTAssertTrue(ffprobe.contains(URL(fileURLWithPath: "/custom/bin/ffprobe")))
         XCTAssertEqual(ffprobe.filter { $0.path == "\(managedDirectory)/ffprobe" }.count, 1)
+        XCTAssertEqual(ffprobe.filter { $0.path == "\(legacyManagedDirectory)/ffprobe" }.count, 1)
         XCTAssertEqual(ffprobe.filter { $0.path == "/opt/homebrew/bin/ffprobe" }.count, 1)
     }
 
@@ -1353,7 +1358,7 @@ final class MediaPreviewTests: XCTestCase {
     }
 
     func testUsageManualLocatorPrefersPDFThenFallsBackToMarkdown() {
-        let bundle = URL(fileURLWithPath: "/Applications/Finder Media Preview.app", isDirectory: true)
+        let bundle = URL(fileURLWithPath: "/Applications/AI Video Cutty.app", isDirectory: true)
         let workingDirectory = URL(fileURLWithPath: "/project", isDirectory: true)
         let localMarkdown = workingDirectory.appendingPathComponent("Docs/使用说明.md")
         XCTAssertEqual(
@@ -1369,7 +1374,7 @@ final class MediaPreviewTests: XCTestCase {
     }
 
     func testFFmpegInstallScriptLocatorFindsBundledOrDevelopmentScript() {
-        let bundle = URL(fileURLWithPath: "/Applications/Finder Media Preview.app", isDirectory: true)
+        let bundle = URL(fileURLWithPath: "/Applications/AI Video Cutty.app", isDirectory: true)
         let workingDirectory = URL(fileURLWithPath: "/project", isDirectory: true)
         let developmentScript = workingDirectory.appendingPathComponent("Scripts/安装 FFmpeg.command")
         XCTAssertEqual(

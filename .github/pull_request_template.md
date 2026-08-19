@@ -1,13 +1,13 @@
-## Summary
+## 摘要
 
-Describe the change and its user impact.
+说明变更及其对用户的影响。
 
-## Validation
+## 验证
 
-List the checks you ran, for example `swift test`.
+列出运行过的检查，例如 `swift test`。
 
-## Checklist
+## 检查表
 
-- [ ] I tested this change on a supported macOS version where applicable.
-- [ ] I did not include generated apps, archives, temporary files, or local user state.
-- [ ] I have reported any security-sensitive concern privately rather than in this public PR.
+- [ ] 在适用时，我已在受支持的 macOS 版本上测试此变更。
+- [ ] 我未包含生成的应用、归档、临时文件或本地用户状态。
+- [ ] 我已通过私密渠道报告安全敏感问题，而非在公开 PR 中披露。

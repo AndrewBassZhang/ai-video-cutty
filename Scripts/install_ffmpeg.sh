@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Optional, per-user FFmpeg/ffprobe installer for Finder Media Preview.
+# Optional, per-user FFmpeg/ffprobe installer for AI Video Cutty.
 # It intentionally has no Homebrew, npm, sudo, Xcode CLT, or remote-script path.
 
 emulate -LR zsh
@@ -8,15 +8,16 @@ set -euo pipefail
 readonly VERSION='b6.1.1'
 readonly DOMESTIC_BASE='https://cdn.npmmirror.com/binaries/ffmpeg-static/b6.1.1'
 readonly UPSTREAM_BASE='https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1'
-readonly MANIFEST_NAME='finder-media-preview-ffmpeg-static-manifest.txt'
+readonly MANIFEST_NAME='ai-video-cutty-ffmpeg-static-manifest.txt'
+readonly LEGACY_MANIFEST_NAME='finder-media-preview-ffmpeg-static-manifest.txt'
 
 source_mode='domestic'
 dry_run=0
 stage_dir=''
 
-log() { print -- "[Finder Media Preview] $*"; }
-warn() { print -u2 -- "[Finder Media Preview] 注意：$*"; }
-fail() { print -u2 -- "[Finder Media Preview] 失败：$*"; exit 1; }
+log() { print -- "[AI Video Cutty] $*"; }
+warn() { print -u2 -- "[AI Video Cutty] 注意：$*"; }
+fail() { print -u2 -- "[AI Video Cutty] 失败：$*"; exit 1; }
 
 usage() {
   cat <<'EOF'
@@ -26,7 +27,7 @@ usage() {
   --upstream  只用固定 GitHub 上游发布页。
   --dry-run   只显示会执行的步骤；不联网、不创建目录、不安装文件。
 
-安装位置：${FINDER_MEDIA_PREVIEW_BIN_DIR:-$HOME/Library/Application Support/Finder Media Preview/bin}
+安装位置：${AI_VIDEO_CUTTY_BIN_DIR:-${FINDER_MEDIA_PREVIEW_BIN_DIR:-$HOME/Library/Application Support/AI Video Cutty/bin}}
 EOF
 }
 
@@ -67,7 +68,7 @@ esac
 
 home_directory="${HOME:-}"
 [[ -n "$home_directory" ]] || fail '没有可用的 HOME，无法确定用户级安装目录。'
-install_dir="${FINDER_MEDIA_PREVIEW_BIN_DIR:-$home_directory/Library/Application Support/Finder Media Preview/bin}"
+install_dir="${AI_VIDEO_CUTTY_BIN_DIR:-${FINDER_MEDIA_PREVIEW_BIN_DIR:-$home_directory/Library/Application Support/AI Video Cutty/bin}}"
 [[ -n "$install_dir" ]] || fail '安装目录为空。'
 
 readonly FFMPEG_ASSET="ffmpeg-darwin-${asset_arch}.gz"
@@ -144,9 +145,11 @@ stage_executable() {
   log "${label} 可执行文件已通过 -version 自检。"
 }
 
-write_manifest() {
-  cat > "$stage_dir/$MANIFEST_NAME" <<EOF
-Finder Media Preview FFmpeg-static provenance
+write_manifest_file() {
+  local manifest_name="$1"
+  local product_name="$2"
+  cat > "$stage_dir/$manifest_name" <<EOF
+${product_name} FFmpeg-static provenance
 version=${VERSION}
 architecture=${asset_arch}
 installed_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -162,12 +165,19 @@ license=https://github.com/eugeneware/ffmpeg-static/blob/b6.1.1/LICENSE
 EOF
 }
 
+write_manifest() {
+  write_manifest_file "$MANIFEST_NAME" 'AI Video Cutty'
+  # Keep the historical filename and header for local tooling that previously
+  # consumed its provenance record. Both manifests describe the same verified pair.
+  write_manifest_file "$LEGACY_MANIFEST_NAME" 'Finder Media Preview'
+}
+
 replace_staged_files() {
   local item
-  for item in ffmpeg ffprobe "$MANIFEST_NAME"; do
+  for item in ffmpeg ffprobe "$MANIFEST_NAME" "$LEGACY_MANIFEST_NAME"; do
     [[ ! -d "$install_dir/$item" ]] || fail "目标路径是目录，拒绝替换：$install_dir/$item"
   done
-  for item in ffmpeg ffprobe "$MANIFEST_NAME"; do
+  for item in ffmpeg ffprobe "$MANIFEST_NAME" "$LEGACY_MANIFEST_NAME"; do
     mv -f -- "$stage_dir/$item" "$install_dir/$item" || fail "无法替换 $install_dir/$item。旧文件可能仍可用；请检查目录权限后重试。"
   done
 }
@@ -188,7 +198,7 @@ fi
 
 mkdir -p -- "$install_dir" || fail "无法创建用户级安装目录：$install_dir"
 [[ -w "$install_dir" ]] || fail "安装目录不可写：$install_dir"
-stage_dir="$(mktemp -d "${install_dir}/.finder-media-preview-ffmpeg-stage.XXXXXX")" || fail '无法创建安装暂存目录。'
+stage_dir="$(mktemp -d "${install_dir}/.ai-video-cutty-ffmpeg-stage.XXXXXX")" || fail '无法创建安装暂存目录。'
 
 log "安装 FFmpeg-static ${VERSION}（${asset_arch}）到用户目录；不会请求管理员密码。"
 fetch_and_verify ffmpeg "$FFMPEG_ASSET" "$FFMPEG_SHA256"
@@ -202,4 +212,4 @@ replace_staged_files
 "$install_dir/ffprobe" -version >/dev/null 2>&1 || fail '安装后的 ffprobe 未通过 -version 自检。'
 log "安装完成：$install_dir/ffmpeg 与 $install_dir/ffprobe"
 log "来源与 SHA-256 记录：$install_dir/$MANIFEST_NAME"
-log '请重新打开 Finder Media Preview；它会优先查找此用户级目录。'
+log '请重新打开 AI Video Cutty；它会优先查找此用户级目录。'

@@ -1,38 +1,38 @@
-# Code of Conduct
+# 行为准则
 
-## Our pledge
+## 我们的承诺
 
-We want participation in Finder Media Preview to be welcoming, respectful, and productive for everyone, regardless of experience level, identity, background, disability, or communication style.
+我们希望每个人都能以受欢迎、受尊重且高效的方式参与 AI Video Cutty，不因经验水平、身份、背景、残障状况或沟通方式而受到区别对待。
 
-## Expected behavior
+## 期望行为
 
-- Be respectful and assume good faith while asking for clarification when needed.
-- Focus critique on code, behavior, evidence, and project decisions—not on people.
-- Share only media, logs, and metadata you are authorized to disclose.
-- Respect privacy, security-reporting boundaries, and maintainer time.
-- Help keep discussions accessible, concise, and relevant to the project.
+- 保持尊重并善意推定；必要时请求澄清。
+- 将批评聚焦于代码、行为、证据和项目决策，而非个人。
+- 仅分享您有权披露的媒体、日志和元数据。
+- 尊重隐私、安全报告边界和维护者的时间。
+- 帮助讨论保持可访问、简洁并与项目相关。
 
-## Unacceptable behavior
+## 不可接受的行为
 
-- Harassment, hate speech, threats, discrimination, or personal attacks.
-- Sexualized language or imagery in project spaces.
-- Publishing private media, credentials, personal file paths, security findings, or other confidential information without permission.
-- Deliberately disruptive conduct, bad-faith reports, or repeated disregard for project boundaries.
+- 骚扰、仇恨言论、威胁、歧视或人身攻击。
+- 在项目空间中使用性化语言或图像。
+- 未经许可发布私密媒体、凭证、个人文件路径、安全发现或其他机密信息。
+- 故意扰乱、恶意报告或反复无视项目边界。
 
-## Enforcement
+## 执行
 
-Maintainers may clarify expectations, remove content, limit participation, or take other proportionate action to protect contributors and users. Decisions should be documented privately when practical, with particular care for reports involving safety, privacy, or security.
+维护者可澄清期望、移除内容、限制参与或采取其他相称措施，以保护贡献者与用户。在可行时，应以私密方式记录决定；处理涉及安全、隐私或保密的报告时须特别谨慎。
 
-## Reporting
+## 报告
 
-For a conduct concern, open a GitHub issue containing only a request for private maintainer contact; do not include personal, private, or security-sensitive details in the public issue. The maintainer will arrange a private channel for the report. Platform-level abuse may also be reported through GitHub's own abuse-reporting process.
+如需报告行为问题，请创建一个 GitHub issue，仅请求与维护者私下联系；请勿在公开 issue 中包含个人、私密或安全敏感细节。维护者会安排私密渠道接收报告。平台级滥用也可通过 GitHub 自身的滥用报告流程举报。
 
-Security vulnerabilities should follow [SECURITY.md](SECURITY.md), not the public issue tracker.
+安全漏洞应遵循 [SECURITY.md](SECURITY.md)，而非公开 issue 跟踪器。
 
-## Scope
+## 适用范围
 
-This code applies to project spaces and to public behavior when someone is representing the Finder Media Preview community.
+本准则适用于项目空间，以及代表 AI Video Cutty 社区时的公开行为。
 
-## Attribution
+## 致谢
 
-This document is informed by the [Contributor Covenant, version 2.1](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
+本文档参考 [Contributor Covenant 2.1 版](https://www.contributor-covenant.org/version/2/1/code_of_conduct/)。

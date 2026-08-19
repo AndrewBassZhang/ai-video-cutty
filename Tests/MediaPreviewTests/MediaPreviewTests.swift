@@ -945,13 +945,15 @@ final class MediaPreviewTests: XCTestCase {
         XCTAssertLessThanOrEqual(resized.maxY, source.height)
     }
 
-    func testFixedCropPresetRemainsLockedAfterPanAndFreeModeIsRequiredToResize() throws {
+    func testFixedCropPresetRemainsLockedAfterPanAndResizeKeepsThePreset() throws {
         let source = CGSize(width: 1_920, height: 1_080)
         let cinema = try XCTUnwrap(VideoCropMath.maximumCrop(in: source, aspectRatio: 2.39))
         let panned = try XCTUnwrap(VideoCropMath.moved(cinema, by: CGPoint(x: 120, y: -40), in: source))
 
-        XCTAssertFalse(VideoCropEditorInteraction.allowsResize(for: .cinema239))
+        XCTAssertTrue(VideoCropEditorInteraction.allowsResize(for: .original))
+        XCTAssertTrue(VideoCropEditorInteraction.allowsResize(for: .cinema239))
         XCTAssertEqual(VideoCropEditorInteraction.pan.resultingPreset(from: .cinema239), .cinema239)
+        XCTAssertEqual(VideoCropEditorInteraction.resize.resultingPreset(from: .cinema239), .cinema239)
         XCTAssertEqual(
             try XCTUnwrap(VideoCropMath.displayRatio(for: panned)),
             try XCTUnwrap(VideoCropMath.displayRatio(for: cinema)),
@@ -965,6 +967,105 @@ final class MediaPreviewTests: XCTestCase {
             try XCTUnwrap(VideoCropMath.displayRatio(for: freeResized)),
             try XCTUnwrap(VideoCropMath.displayRatio(for: cinema))
         )
+    }
+
+    func testFixedCropCornerResizeKeepsAnchorsRatiosBoundsAndEvenPixels() throws {
+        let source = CGSize(width: 1_920, height: 1_080)
+        let fixedPresets: [(VideoCropPreset, VideoCropOrientation)] = [
+            (.square, .horizontal),
+            (.standardFourByThree, .horizontal), (.standardFourByThree, .vertical),
+            (.widescreenSixteenByNine, .horizontal), (.widescreenSixteenByNine, .vertical),
+            (.cinema239, .horizontal), (.cinema239, .vertical)
+        ]
+        let shrinkDeltas: [(CropResizeHandle, CGPoint)] = [
+            (.topLeft, CGPoint(x: 180, y: 120)),
+            (.topRight, CGPoint(x: -180, y: 120)),
+            (.bottomLeft, CGPoint(x: 180, y: -120)),
+            (.bottomRight, CGPoint(x: -180, y: -120))
+        ]
+
+        func oppositeCorner(of rect: CGRect, for handle: CropResizeHandle) -> CGPoint {
+            switch handle {
+            case .topLeft: return CGPoint(x: rect.maxX, y: rect.maxY)
+            case .topRight: return CGPoint(x: rect.minX, y: rect.maxY)
+            case .bottomLeft: return CGPoint(x: rect.maxX, y: rect.minY)
+            case .bottomRight: return CGPoint(x: rect.minX, y: rect.minY)
+            }
+        }
+
+        func assertFixedRect(_ rect: CGRect, expectedRatio: CGFloat, file: StaticString = #filePath, line: UInt = #line) throws {
+            XCTAssertEqual(Int(rect.minX) % 2, 0, file: file, line: line)
+            XCTAssertEqual(Int(rect.minY) % 2, 0, file: file, line: line)
+            XCTAssertEqual(Int(rect.width) % 2, 0, file: file, line: line)
+            XCTAssertEqual(Int(rect.height) % 2, 0, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(rect.minX, 0, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(rect.minY, 0, file: file, line: line)
+            XCTAssertLessThanOrEqual(rect.maxX, source.width, file: file, line: line)
+            XCTAssertLessThanOrEqual(rect.maxY, source.height, file: file, line: line)
+            let ratio = try XCTUnwrap(VideoCropMath.displayRatio(for: rect), file: file, line: line)
+            XCTAssertEqual(ratio, expectedRatio, accuracy: 2 / rect.height, file: file, line: line)
+        }
+
+        for (preset, orientation) in fixedPresets {
+            let ratio = try XCTUnwrap(preset.aspectRatio(for: orientation))
+            let initial = try XCTUnwrap(VideoCropMath.maximumCrop(in: source, aspectRatio: ratio))
+            for (handle, shrinkDelta) in shrinkDeltas {
+                let anchoredBeforeShrink = oppositeCorner(of: initial, for: handle)
+                let shrunken = try XCTUnwrap(VideoCropMath.resizedFixed(initial, handle: handle, by: shrinkDelta, aspectRatio: ratio, in: source))
+                XCTAssertEqual(oppositeCorner(of: shrunken, for: handle), anchoredBeforeShrink)
+                try assertFixedRect(shrunken, expectedRatio: ratio)
+
+                let anchoredBeforeGrow = oppositeCorner(of: shrunken, for: handle)
+                let grown = try XCTUnwrap(VideoCropMath.resizedFixed(shrunken, handle: handle, by: CGPoint(x: -shrinkDelta.x * 5, y: -shrinkDelta.y * 5), aspectRatio: ratio, in: source))
+                XCTAssertEqual(oppositeCorner(of: grown, for: handle), anchoredBeforeGrow)
+                try assertFixedRect(grown, expectedRatio: ratio)
+
+                let minimum = try XCTUnwrap(VideoCropMath.resizedFixed(shrunken, handle: handle, by: CGPoint(x: shrinkDelta.x * 100, y: shrinkDelta.y * 100), aspectRatio: ratio, in: source))
+                XCTAssertGreaterThanOrEqual(minimum.width, VideoCropMath.minimumDimension)
+                XCTAssertGreaterThanOrEqual(minimum.height, VideoCropMath.minimumDimension)
+                try assertFixedRect(minimum, expectedRatio: ratio)
+            }
+        }
+    }
+
+    func testFreeCornerResizeRemainsIndependentAndInteriorPanKeepsThePreset() throws {
+        let source = CGSize(width: 1_920, height: 1_080)
+        let original = CGRect(x: 240, y: 180, width: 800, height: 600)
+        let resized = try XCTUnwrap(VideoCropMath.resized(original, handle: .topLeft, by: CGPoint(x: 120, y: 40), in: source))
+        XCTAssertEqual(resized, CGRect(x: 360, y: 220, width: 680, height: 560))
+        XCTAssertEqual(resized.maxX, original.maxX)
+        XCTAssertEqual(resized.maxY, original.maxY)
+        XCTAssertNotEqual(resized.width / resized.height, original.width / original.height)
+
+        let panned = try XCTUnwrap(VideoCropMath.moved(resized, by: CGPoint(x: 160, y: -80), in: source))
+        XCTAssertEqual(panned, CGRect(x: 520, y: 140, width: 680, height: 560))
+        XCTAssertEqual(VideoCropEditorInteraction.pan.resultingPreset(from: .free), .free)
+    }
+
+    @MainActor
+    func testCropEditorExposesFourVisibleHitTestableHandlesForDefaultFixedAndFreeFrames() throws {
+        let source = CGSize(width: 1_920, height: 1_080)
+        let defaultEditor = CropEditorSheetController(sourceSize: source, previewImage: nil, initialSelection: nil) { _ in }
+        let defaultView = try XCTUnwrap(firstDescendant(of: CropEditorView.self, in: defaultEditor.view))
+        let fixedRect = try XCTUnwrap(VideoCropMath.maximumCrop(in: source, aspectRatio: 16.0 / 9.0))
+        let freeRect = CGRect(x: 240, y: 180, width: 960, height: 600)
+        let selections = [
+            defaultView.selection,
+            VideoCropSelection(preset: .widescreenSixteenByNine, orientation: .horizontal, sourceRect: fixedRect, canvasSize: source),
+            VideoCropSelection(preset: .free, sourceRect: freeRect, canvasSize: source)
+        ]
+
+        for selection in selections {
+            defaultView.selection = try XCTUnwrap(selection)
+            defaultView.layoutSubtreeIfNeeded()
+            let handles = defaultView.cropHandleGeometries
+            XCTAssertEqual(handles.map(\.handle), CropResizeHandle.allCases)
+            for geometry in handles {
+                XCTAssertFalse(geometry.drawingRect.isEmpty)
+                XCTAssertTrue(defaultView.bounds.contains(geometry.drawingRect))
+                XCTAssertEqual(defaultView.resizeHandle(at: geometry.center), geometry.handle)
+            }
+        }
     }
 
     func testVideoCropFilterIsAppliedOnlyToVideoExportWithoutScaling() throws {

@@ -1,40 +1,40 @@
-name: Feature request
-description: Suggest an improvement to MediaPreview.
-title: "[Feature]: "
+name: 功能建议
+description: 为 AI Video Cutty 提出改进建议。
+title: "[功能建议]: "
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
-      value: "Do not disclose security vulnerabilities here; report them privately to the maintainers."
+      value: "请勿在此披露安全漏洞；请通过私密渠道向维护者报告。"
   - type: dropdown
     id: media-type
     attributes:
-      label: Media type
+      label: 媒体类型
       options:
-        - Video
-        - Audio
-        - Image
-        - Other
+        - 视频
+        - 音频
+        - 图像
+        - 其他
     validations:
       required: true
   - type: input
     id: macos-version
     attributes:
-      label: macOS version, if relevant
-      placeholder: "e.g. macOS 14.6"
+      label: macOS 版本（如相关）
+      placeholder: "例如：macOS 14.6"
   - type: textarea
     id: problem
     attributes:
-      label: Problem or use case
+      label: 问题或使用场景
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed solution
+      label: 建议方案
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives considered
+      label: 已考虑的替代方案

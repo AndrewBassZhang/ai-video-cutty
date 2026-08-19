@@ -1,44 +1,44 @@
-name: Bug report
-description: Report a reproducible problem with MediaPreview.
-title: "[Bug]: "
+name: 缺陷报告
+description: 报告 AI Video Cutty 中可复现的问题。
+title: "[缺陷]: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: "Thanks for reporting a problem. Do not disclose security vulnerabilities here; report them privately to the maintainers."
+      value: "感谢报告问题。请勿在此披露安全漏洞；请通过私密渠道向维护者报告。"
   - type: input
     id: macos-version
     attributes:
-      label: macOS version
-      placeholder: "e.g. macOS 14.6"
+      label: macOS 版本
+      placeholder: "例如：macOS 14.6"
     validations:
       required: true
   - type: dropdown
     id: media-type
     attributes:
-      label: Media type
+      label: 媒体类型
       options:
-        - Video
-        - Audio
-        - Image
-        - Other
+        - 视频
+        - 音频
+        - 图像
+        - 其他
     validations:
       required: true
   - type: textarea
     id: steps-to-reproduce
     attributes:
-      label: Steps to reproduce
+      label: 复现步骤
       placeholder: "1. ...\n2. ...\n3. ..."
     validations:
       required: true
   - type: textarea
     id: expected-and-actual
     attributes:
-      label: Expected and actual behavior
+      label: 预期行为与实际行为
     validations:
       required: true
   - type: textarea
     id: logs
     attributes:
-      label: Relevant logs or screenshots
-      description: Please remove personal or sensitive information.
+      label: 相关日志或截图
+      description: 请移除个人或敏感信息。

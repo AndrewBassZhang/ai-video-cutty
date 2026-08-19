@@ -3,7 +3,7 @@ emulate -LR zsh
 set -euo pipefail
 
 task_root="$(cd "$(dirname "$0")/.." && pwd)"
-app="$task_root/build/MediaPreview.app"
+app="$task_root/build/AI Video Cutty.app"
 icon_source="$task_root/Resources/AppIcon-1024.png"
 icon_temp=''
 
@@ -32,7 +32,7 @@ install -m 755 Scripts/install_ffmpeg.sh "$app/Contents/Resources/install_ffmpeg
 # .sh copy too, so the exact script is available for audit or terminal use.
 install -m 755 Scripts/install_ffmpeg.sh "$app/Contents/Resources/安装 FFmpeg.command"
 
-icon_temp="$(mktemp -d "${TMPDIR:-/tmp}/finder-media-preview-icon.XXXXXX")" || fail 'could not create temporary iconset directory.'
+icon_temp="$(mktemp -d "${TMPDIR:-/tmp}/ai-video-cutty-icon.XXXXXX")" || fail 'could not create temporary iconset directory.'
 iconset="$icon_temp/AppIcon.iconset"
 mkdir -p "$iconset"
 

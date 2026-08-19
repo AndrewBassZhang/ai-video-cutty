@@ -1,15 +1,15 @@
-Finder Media Preview 安装说明
+AI Video Cutty 安装说明
 
-1. 双击 Finder-Media-Preview-macOS.dmg。
-2. 将 Finder Media Preview.app 拖到 Applications（应用程序）图标。
-3. 在“应用程序”中找到 Finder Media Preview.app；首次启动请按住 Control 点按它，选择“打开”，再在确认框中选择“打开”。本原型为 ad-hoc 签名，尚未经过 Developer ID 签名或 Apple 公证。
+1. 双击 `AI-Video-Cutty-macOS.dmg`。
+2. 将 `AI Video Cutty.app` 拖到 Applications（应用程序）图标。
+3. 在“应用程序”中找到 `AI Video Cutty.app`；首次启动时请按住 Control 点按它，选择“打开”，再在确认框中选择“打开”。该原型使用 ad-hoc 签名，尚未进行 Developer ID 签名或 Apple 公证。
 4. 重新打开应用后，即可从 Finder 的服务入口打开本地媒体文件。
 
-FFmpeg 是可选项：
+FFmpeg 为可选组件：
 
-- 普通视频、音频和图片预览不需要 FFmpeg。
-- 视频/音频 A/B 裁切导出及原码流音频导出需要 FFmpeg；ffprobe 可提供更丰富的媒体元数据。
-- 如需这些功能，可选地双击 DMG 中的“安装 FFmpeg（无需 Homebrew）.command”。脚本仅在您主动运行后下载 ffmpeg-static b6.1.1 到 ~/Library/Application Support/Finder Media Preview/bin；不需要管理员权限，也不会在应用中预置 FFmpeg 或 ffprobe 二进制文件。
-- 安装完成后完全退出并重新打开 Finder Media Preview。
+- 普通视频、音频和图像预览不需要 FFmpeg。
+- 视频/音频 A/B 裁切导出与原码流音频导出需要 FFmpeg；`ffprobe` 可提供更丰富的媒体元数据。
+- 如需这些功能，可主动双击 DMG 中的“安装 FFmpeg（无需 Homebrew）.command”。脚本仅在您主动运行后下载 `ffmpeg-static b6.1.1` 到 `~/Library/Application Support/AI Video Cutty/bin`；不需要管理员权限，不使用 Homebrew 或 `sudo`，也不会在应用中预置 FFmpeg 或 `ffprobe` 二进制文件。
+- 安装完成后请完全退出并重新打开 AI Video Cutty。
 
-脚本默认通过 npmmirror 下载，并固定校验两个 gzip 文件的 SHA-256；只有连接或 HTTP 请求失败时才使用固定的 GitHub 发布地址。第三方运行时为 GPL-3.0-or-later，完整来源、许可证链接与校验值见 THIRD_PARTY_NOTICES.md。
+脚本默认通过 npmmirror 下载，并固定校验两个 gzip 文件的 SHA-256；只有连接或 HTTP 请求失败时才使用固定的 GitHub 上游发布地址。第三方运行时采用 GPL-3.0-or-later 许可证，完整来源、许可证链接与校验值见 THIRD_PARTY_NOTICES.md。

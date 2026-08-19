@@ -7,16 +7,17 @@ set -euo pipefail
 
 readonly SCRIPT_DIR=${0:A:h}
 readonly PROJECT_DIR=${SCRIPT_DIR:h}
-readonly APP_SOURCE=${PROJECT_DIR}/build/MediaPreview.app
+readonly APP_NAME='AI Video Cutty'
+readonly APP_SOURCE=${PROJECT_DIR}/build/${APP_NAME}.app
 readonly INSTALLER_SOURCE=${PROJECT_DIR}/Scripts/install_ffmpeg.sh
 readonly INSTALLER_NAME='安装 FFmpeg（无需 Homebrew）.command'
 readonly INSTALL_GUIDE_SOURCE=${PROJECT_DIR}/Docs/安装说明.txt
 readonly MANUAL_SOURCE=${PROJECT_DIR}/Docs/使用说明.md
 readonly NOTICES_SOURCE=${PROJECT_DIR}/THIRD_PARTY_NOTICES.md
 readonly DIST_DIR=${PROJECT_DIR}/dist
-readonly DMG_NAME=Finder-Media-Preview-macOS.dmg
+readonly DMG_NAME=AI-Video-Cutty-macOS.dmg
 readonly OUTPUT_DMG=${DIST_DIR}/${DMG_NAME}
-readonly VOLUME_NAME='Finder Media Preview'
+readonly VOLUME_NAME=${APP_NAME}
 readonly TEMP_BASE=${TMPDIR:-/tmp}
 
 stage_dir=''
@@ -30,7 +31,7 @@ cleanup() {
     hdiutil detach "$mount_dir" -quiet || \
       print -u2 -- "Warning: could not detach temporary image at: $mount_dir"
   fi
-  if [[ "$stage_dir" == "${TEMP_BASE%/}/finder-media-preview."* && -d "$stage_dir" ]]; then
+  if [[ "$stage_dir" == "${TEMP_BASE%/}/ai-video-cutty."* && -d "$stage_dir" ]]; then
     rm -rf -- "$stage_dir"
   fi
   exit "$exit_status"
@@ -47,7 +48,7 @@ verify_release_contents() {
   local root="$1"
   local application_link=''
 
-  [[ -d "$root/Finder Media Preview.app" ]] || fail "required app is missing: $root/Finder Media Preview.app"
+  [[ -d "$root/$APP_NAME.app" ]] || fail "required app is missing: $root/$APP_NAME.app"
   [[ -L "$root/Applications" ]] || fail "required Applications link is missing: $root/Applications"
   application_link="$(readlink "$root/Applications")" || fail "could not read Applications link: $root/Applications"
   [[ "$application_link" == '/Applications' ]] || fail "Applications link must target /Applications, got: $application_link"
@@ -56,8 +57,8 @@ verify_release_contents() {
   [[ -f "$root/安装说明.txt" ]] || fail "required install guide is missing: $root/安装说明.txt"
   [[ -f "$root/使用说明.md" ]] || fail "required manual is missing: $root/使用说明.md"
   [[ -f "$root/THIRD_PARTY_NOTICES.md" ]] || fail "required third-party notice is missing: $root/THIRD_PARTY_NOTICES.md"
-  [[ -f "$root/Finder Media Preview.app/Contents/Resources/AppIcon.icns" ]] || \
-    fail "app icon is missing: $root/Finder Media Preview.app/Contents/Resources/AppIcon.icns"
+  [[ -f "$root/$APP_NAME.app/Contents/Resources/AppIcon.icns" ]] || \
+    fail "app icon is missing: $root/$APP_NAME.app/Contents/Resources/AppIcon.icns"
   [[ ! -e "$root/使用说明.pdf" ]] || fail "PDF manuals must not be packaged: $root/使用说明.pdf"
 }
 
@@ -81,14 +82,14 @@ mkdir -p -- "$DIST_DIR"
 print -- "Verifying source app signature…"
 codesign --verify --deep --strict --verbose=2 "$APP_SOURCE"
 
-stage_dir=$(mktemp -d "${TEMP_BASE%/}/finder-media-preview.XXXXXX") || \
+stage_dir=$(mktemp -d "${TEMP_BASE%/}/ai-video-cutty.XXXXXX") || \
   fail 'could not create a temporary staging directory.'
 readonly STAGE_ROOT=${stage_dir}/volume
 mount_dir=${stage_dir}/mount
 mkdir -p -- "$STAGE_ROOT" "$mount_dir"
 
 print -- "Staging release contents…"
-ditto "$APP_SOURCE" "$STAGE_ROOT/Finder Media Preview.app"
+ditto "$APP_SOURCE" "$STAGE_ROOT/$APP_NAME.app"
 ln -s /Applications "$STAGE_ROOT/Applications"
 install -m 755 "$INSTALLER_SOURCE" "$STAGE_ROOT/$INSTALLER_NAME"
 ditto "$INSTALL_GUIDE_SOURCE" "$STAGE_ROOT/安装说明.txt"
@@ -97,7 +98,7 @@ ditto "$NOTICES_SOURCE" "$STAGE_ROOT/THIRD_PARTY_NOTICES.md"
 verify_release_contents "$STAGE_ROOT"
 
 print -- "Verifying staged app signature…"
-codesign --verify --deep --strict --verbose=2 "$STAGE_ROOT/Finder Media Preview.app"
+codesign --verify --deep --strict --verbose=2 "$STAGE_ROOT/$APP_NAME.app"
 
 # A standard drag-install layout is deliberately used. Finder window/view settings
 # are user-visible mutable state, so this script does not drive Finder via AppleScript.
@@ -117,7 +118,7 @@ print -- "Mounting DMG privately to verify packaged app signature…"
 hdiutil attach -readonly -nobrowse -noverify -mountpoint "$mount_dir" "$OUTPUT_DMG" >/dev/null
 image_attached=1
 verify_release_contents "$mount_dir"
-codesign --verify --deep --strict --verbose=2 "$mount_dir/Finder Media Preview.app"
+codesign --verify --deep --strict --verbose=2 "$mount_dir/$APP_NAME.app"
 hdiutil detach "$mount_dir" -quiet
 image_attached=0
 

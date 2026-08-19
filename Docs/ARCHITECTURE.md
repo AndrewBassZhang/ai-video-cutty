@@ -1,143 +1,143 @@
-# Architecture
+# 架构说明
 
-## Purpose and scope
+## 目的与范围
 
-Finder Media Preview is a single-target macOS SwiftPM executable. Its current architecture favors a small, local AppKit application over a service or daemon: Finder supplies one selected local file, the app presents a preview panel, and optional export flows create user-selected local output files.
+AI Video Cutty 是单目标的 macOS SwiftPM 可执行程序。当前架构选择小型、本地运行的 AppKit 应用，而非服务或守护进程：Finder 提供一个已选中的本地文件，应用显示预览面板，可选导出流程只创建用户指定的本地输出文件。
 
-This document maps the present source tree. It describes implementation boundaries, not a runtime security certification or a promise of API stability.
+本文档映射当前源码树，说明实现边界；它不是运行时安全认证，也不承诺 API 稳定性。
 
-## System view
+## 系统视图
 
 ```text
-Finder selection or local launch argument
+Finder 选中文件或本地启动参数
         |
         v
 AppDelegate / LaunchInput / ServiceInput
-        |  validates a local regular file
+        |  验证本地普通文件
         v
-MediaRoute (UniformTypeIdentifiers + ImageIO preflight)
+MediaRoute（UniformTypeIdentifiers + ImageIO 预检）
         |
         +-------------------+-------------------+
         |                   |                   |
         v                   v                   v
-   video / audio          image            unsupported
+     视频 / 音频            图像               不支持
         |                   |                   |
         v                   v                   v
- AVFoundation + AVKit    ImageIO        graceful termination
+ AVFoundation + AVKit    ImageIO            正常结束
         |                   |
         +---------+---------+
                   v
-       PreviewController + AppKit views
+       PreviewController + AppKit 视图
                   |
         +---------+----------+
         |                    |
         v                    v
-  local preview/UI      explicit export/save
+   本地预览 / 界面       明确的导出 / 保存
                               |
                  +------------+-------------+
                  |                          |
                  v                          v
-       ImageIO temporary write      external FFmpeg Process
+       ImageIO 临时写入              外部 FFmpeg `Process`
 ```
 
-## Source layout
+## 源码布局
 
-| Path | Responsibility |
+| 路径 | 职责 |
 | --- | --- |
-| `Package.swift` | Declares a macOS 13 SwiftPM executable target and its test target. |
-| `Sources/MediaPreview/App.swift` | Application lifecycle, Finder Service entry, media routing, panel and controller composition, playback state, shortcut storage, image-save behavior, FFmpeg plans/processes, and app-level export orchestration. |
-| `Sources/MediaPreview/TimelineView.swift` | Custom AppKit timeline, waveform extraction/display, player/image zoom surfaces, volume control, A/B marker rendering, and related view math. |
-| `Sources/MediaPreview/CropEditor.swift` | Crop presets, transformed-canvas geometry, display transforms, interactive crop view, and the crop editor sheet. |
-| `Sources/MediaPreview/Metadata.swift` | Image metadata parsing, native AVFoundation media metadata fallback, optional ffprobe enrichment, and display formatting. |
-| `Tests/MediaPreviewTests/` | XCTest coverage for routing, layout, export planning, transforms, metadata parsing, keyboard behavior, and save-safety decisions. |
-| `Scripts/build.sh` | Builds the release executable, assembles the local app bundle, embeds the manuals/installer, and applies ad-hoc signing. |
-| `Scripts/install_ffmpeg.sh` | Explicit, Terminal-visible Homebrew route for installing external FFmpeg. |
-| `Scripts/package_dmg.sh` | Packages an existing app bundle into a non-overwriting drag-install DMG. |
+| `Package.swift` | 声明 macOS 13 SwiftPM 可执行目标及其测试目标。 |
+| `Sources/MediaPreview/App.swift` | 应用生命周期、Finder 服务入口、媒体路由、面板与控制器组合、播放状态、快捷键存储、图像保存行为、FFmpeg 计划与进程，以及应用级导出编排。 |
+| `Sources/MediaPreview/TimelineView.swift` | 自定义 AppKit 时间线、波形提取/显示、播放器与图像缩放界面、音量控制、A/B 标记绘制及相关视图计算。 |
+| `Sources/MediaPreview/CropEditor.swift` | 裁切预设、变换后画布几何、显示变换、交互裁切视图及裁切编辑页。 |
+| `Sources/MediaPreview/Metadata.swift` | 图像元数据解析、原生 AVFoundation 媒体元数据回退、可选 `ffprobe` 增强及展示格式化。 |
+| `Tests/MediaPreviewTests/` | 媒体路由、布局、导出计划、变换、元数据解析、键盘行为和保存安全决策的 XCTest 覆盖。 |
+| `Scripts/build.sh` | 构建发布可执行程序，组装本地应用包，嵌入说明与安装器，并进行 ad-hoc 签名。 |
+| `Scripts/install_ffmpeg.sh` | 用户主动启动、在终端可见的外部 FFmpeg 安装流程；不使用 Homebrew 或 `sudo`。 |
+| `Scripts/package_dmg.sh` | 将已有应用包打包成不会覆盖既有文件的拖拽安装 DMG。 |
 
-## AppKit composition
+## 应用界面组成
 
-### Entry and Finder integration
+### 入口与 Finder 集成
 
-`AppDelegate` is the AppKit entry point. It supports two local inputs:
+`AppDelegate` 是 AppKit 入口，支持两种本地输入：
 
-- `LaunchInput` normalizes a filesystem path or a `file:` launch argument and rejects non-file URLs.
-- `showMediaPreview(_:userData:error:)` receives the Finder Service pasteboard. `ServiceInput` reads URL objects, then selects the first local URL that resolves to a regular file.
+- `LaunchInput` 规范化文件系统路径或 `file:` 启动参数，并拒绝非文件 URL。
+- `showMediaPreview(_:userData:error:)` 接收 Finder 服务粘贴板。`ServiceInput` 读取 URL 对象，再选择第一个解析为本地普通文件的 URL。
 
-`presentPreview(for:)` routes the file, constructs a `PreviewController`, and places a `PreviewPanel`. The panel's visible frame prefers the first detected screen, falls back to `NSScreen.main`, and finally uses a fixed fallback frame. A local key-event monitor routes preview keys only while the preview panel is active, preserving text entry in sheets and settings UI.
+`presentPreview(for:)` 对文件路由、构造 `PreviewController` 并放置 `PreviewPanel`。面板可见框优先使用第一个检测到的屏幕，随后回退到 `NSScreen.main`，最后使用固定回退框。本地键盘事件监听器仅在预览面板活跃时路由预览按键，从而保留编辑页与设置界面的文本输入。
 
-### Preview controller and custom views
+### 预览控制器与自定义视图
 
-`PreviewController` owns the selected URL, media kind, `AVPlayer`, view hierarchy, playback state, A/B markers, display transforms, save/export UI, and teardown. It composes:
+`PreviewController` 持有所选 URL、媒体类型、`AVPlayer`、视图层级、播放状态、A/B 标记、显示变换、保存/导出界面和清理逻辑。它组合了：
 
-- `ZoomablePlayerSurface`, which wraps `AVPlayerView` for video/audio presentation, magnification, pan, and display transforms.
-- `ZoomableImageSurface`, which presents an `NSImageView` with analogous image zoom/pan/transforms.
-- `TimelineView`, which shows playhead, A/B markers, video thumbnails, and audio waveform data.
-- `VerticalVolumeControl`, transport buttons, speed controls, export state, and top-level manual/shortcut actions.
-- `ShortcutSettingsWindowController`, backed by `ShortcutStore` in local user defaults.
+- `ZoomablePlayerSurface`：封装 `AVPlayerView`，用于视频/音频展示、缩放、平移和显示变换。
+- `ZoomableImageSurface`：用 `NSImageView` 展示具有相应缩放、平移和变换能力的图像。
+- `TimelineView`：显示播放头、A/B 标记、视频缩略图和音频波形数据。
+- `VerticalVolumeControl`、传输按钮、速度控制、导出状态与顶层说明/快捷键操作。
+- `ShortcutSettingsWindowController`：由本机用户默认设置中的 `ShortcutStore` 支持。
 
-The controller treats plain arrow keys as dedicated transport/volume controls. Configurable bindings remain separate, and `⌘S` is rejected from the in-app shortcut store so it can remain the Finder entry shortcut.
+控制器将不带修饰键的方向键视为专属传输/音量控制。可配置绑定与其分离；`⌘S` 会被应用内快捷键存储拒绝，以保留给 Finder 入口快捷键。
 
-## Media framework boundaries
+## 媒体框架边界
 
-### Uniform Type Identifiers and ImageIO
+### 统一类型标识与 ImageIO
 
-`MediaRoute` uses `UniformTypeIdentifiers` to classify local files as image, audio, video, or unsupported. Image classification has an ImageIO decode preflight, which lets a decodable image be previewed even when its file type is not otherwise classified as an image.
+`MediaRoute` 使用 `UniformTypeIdentifiers` 将本地文件分类为图像、音频、视频或不支持的类型。图像分类包含 ImageIO 解码预检，即使文件类型未被其他规则归类为图像，也能预览可解码图像。
 
-`ImagePreview` uses `CGImageSource` to decode the first image and obtain metadata. `ImageMetadata` extracts display-facing values such as file format, dimensions, color information, EXIF/TIFF camera details, and exposure fields. `ImageRasterExporter` applies the current transform/crop plan and writes image output through a temporary file.
+`ImagePreview` 使用 `CGImageSource` 解码第一张图像并取得元数据。`ImageMetadata` 提取面向界面的文件格式、尺寸、颜色信息、EXIF/TIFF 相机信息和曝光字段。`ImageRasterExporter` 应用当前变换/裁切计划，并通过临时文件写入图像输出。
 
-### AVFoundation and AVKit
+### 媒体播放框架（AVFoundation 与 AVKit）
 
-Video and audio playback are built on `AVPlayer`, `AVPlayerItem`, `AVURLAsset`, and `AVPlayerView`. The controller uses AVFoundation for duration, track discovery, exact seeks, A/B loop coordination, player-item end events, thumbnail generation, crop-preview generation, and native metadata fallback.
+视频和音频播放基于 `AVPlayer`、`AVPlayerItem`、`AVURLAsset` 和 `AVPlayerView`。控制器使用 AVFoundation 获取时长、发现轨道、精确定位、协调 A/B 循环、处理播放器项目结束事件、生成缩略图、生成裁切预览并回退读取原生元数据。
 
-`TimelineView` uses AVFoundation decoding to extract audio samples for waveform display. It is intentionally a UI aid, not a source editor or a universal codec implementation.
+`TimelineView` 使用 AVFoundation 解码音频样本来显示波形。它刻意只作为界面辅助，而不是源编辑器或通用编解码器实现。
 
-`VideoDisplayTransform` represents user-requested quarter turns and horizontal mirroring. Crop coordinates are evaluated on the transformed display canvas so the crop editor, preview, and FFmpeg filter plan share the same order: source orientation normalization, user rotation/mirror, then crop.
+`VideoDisplayTransform` 表示用户请求的四分之一转与水平镜像。裁切坐标在变换后的显示画布上计算，因此裁切编辑器、预览和 FFmpeg 过滤器计划共享同一顺序：源方向规范化、用户旋转/镜像、再裁切。
 
-### Metadata fallback and optional ffprobe
+### 元数据回退与可选 `ffprobe`
 
-`NativeMediaMetadata` uses AVFoundation so basic media information remains available without Homebrew or ffprobe. `FFprobe` is an optional enrichment path. It starts `/opt/homebrew/bin/ffprobe` through `Process`, collects JSON to a temporary file, enforces a five-second deadline and a 2 MiB output limit, then falls back to native metadata on failure.
+`NativeMediaMetadata` 使用 AVFoundation，因此即使没有 FFmpeg 或 `ffprobe`，基础媒体信息仍然可用。`FFprobe` 是可选增强路径：它通过 `Process` 启动 `/opt/homebrew/bin/ffprobe`，将 JSON 收集到临时文件，限制五秒超时和 2 MiB 输出上限；失败时回退到原生元数据。
 
-## Export and save flows
+## 导出与保存流程
 
-### Video and audio trimming
+### 视频与音频裁切
 
-`ABTrimExportPlan` validates an ordered A/B time range. `FFmpegTrimExportPlan` translates it into a deterministic FFmpeg argument array:
+`ABTrimExportPlan` 验证有序的 A/B 时间范围。`FFmpegTrimExportPlan` 将其转换为确定的 FFmpeg 参数数组：
 
-- Video trim exports use H.264 (CRF 18) with AAC audio and can include the current rotation/mirror/crop filter chain.
-- Exact audio trim exports encode to AAC, MP3, or WAV according to the chosen output type.
-- Audio-stream export uses `FFmpegAudioExportPlan` with stream copy when the destination container supports the source audio. A/B stream-copy boundaries are packet-aligned.
+- 视频裁切导出使用 H.264（CRF 18）与 AAC 音频，并可包含当前旋转/镜像/裁切过滤器链。
+- 精确音频裁切导出会根据所选输出类型编码为 AAC、MP3 或 WAV。
+- 原码流音频导出使用 `FFmpegAudioExportPlan`，并在目标容器支持源音频时采用码流复制。A/B 码流复制边界按音频包对齐。
 
-`FFmpegLocator` searches standard executable locations and the inherited `PATH`, while `FFmpegAvailability` verifies the candidate with `-version`. `FFmpegTrimProcess` starts the selected executable via Foundation `Process` with an argument array, reads `-progress pipe:1`, caps retained standard-error text, and reports completion asynchronously to the main actor. It does not use a shell command string.
+`FFmpegLocator` 搜索用户管理目录、标准可执行文件位置和继承的 `PATH`，`FFmpegAvailability` 通过 `-version` 验证候选程序。顺序是 `~/Library/Application Support/AI Video Cutty/bin`、仅用于兼容旧安装的 `~/Library/Application Support/Finder Media Preview/bin`、标准系统位置及 `PATH`。`FFmpegTrimProcess` 通过 Foundation `Process` 和参数数组启动选定的可执行程序，读取 `-progress pipe:1`，限制保留的标准错误文本，并在主 actor 上异步报告完成状态；它不使用 shell 命令字符串。
 
-`NSSavePanel` supplies output paths. Before launching FFmpeg, the controller rejects the source path and any already-existing destination. FFmpeg exports use `-n`, preventing FFmpeg from replacing an existing file.
+`NSSavePanel` 提供输出路径。启动 FFmpeg 前，控制器拒绝源路径和任何已存在的目标路径。FFmpeg 导出使用 `-n`，阻止 FFmpeg 覆盖既有文件。
 
-### Image saves
+### 图像保存
 
-Image crop save enters `CropEditorSheetController`, then presents an explicit decision:
+图像裁切保存进入 `CropEditorSheetController`，随后明确要求选择：
 
-- **Save as New File** derives a numbered sibling path and refuses source-path or occupied-destination writes.
-- **Overwrite Save** is the only source replacement path. It is a deliberate confirmation action and uses `FileManager.replaceItemAt` without a backup item.
+- **另存为新文件** 会生成带编号的同级路径，并拒绝源路径或已占用目标路径。
+- **覆盖保存** 是唯一的源文件替换路径。它需要明确确认，并使用 `FileManager.replaceItemAt` 且不生成备份项。
 
-JPEG conversion and compression never overwrite the source. They render locally, write a temporary file atomically, then move it to a destination that has passed collision checks.
+JPEG 转换与压缩绝不覆盖源文件。它们在本地渲染，原子性写入临时文件，再移动至已通过冲突检查的目标。
 
-## State and lifecycle
+## 状态与生命周期
 
-The app keeps one `PreviewPanel` and one `PreviewController` per running process. When a panel already exists, `presentPreview` repositions and foregrounds that panel rather than constructing another one. Closing the panel removes the key monitor, cancels outstanding work, tears down player observers and image-generation requests, terminates a running FFmpeg process, and exits the app.
+每个运行进程只保留一个 `PreviewPanel` 和一个 `PreviewController`。若面板已存在，`presentPreview` 会重新定位并前置该面板，而不是再创建一个。关闭面板会移除键盘监听器、取消未完成工作、清理播放器观察器和图像生成请求、终止运行中的 FFmpeg 进程，并退出应用。
 
-State that persists across launches is intentionally narrow: only custom keyboard bindings are stored in user defaults. The app does not maintain a media catalog, watch folder, sync queue, login session, or background service.
+跨启动持久化的状态刻意很少：只有自定义键盘绑定存储在用户默认设置中。应用不维护媒体目录、监控文件夹、同步队列、登录会话或后台服务。
 
-## Packaging and distribution
+## 打包与分发
 
-`Scripts/build.sh` compiles the SwiftPM release target, assembles `build/MediaPreview.app`, copies the Chinese manual and FFmpeg installer into the bundle's resources, and applies ad-hoc signing. `Scripts/package_dmg.sh` stages the app with an Applications symlink and manual, verifies the app signature, creates a compressed read-only DMG, and refuses to replace an existing DMG.
+`Scripts/build.sh` 编译 SwiftPM 发布目标，组装 `build/AI Video Cutty.app`，将中文使用说明和 FFmpeg 安装器复制进应用包资源，并进行 ad-hoc 签名。`Scripts/package_dmg.sh` 使用 Applications 符号链接与说明文件暂存应用，验证应用签名，创建压缩只读 `AI-Video-Cutty-macOS.dmg`，并拒绝替换既有 DMG。
 
-This is a local packaging route, not a notarized release pipeline. Developer ID signing, notarization, and public-release provenance remain future work.
+这是本地打包路径，不是已公证的发布流水线。Developer ID 签名、公证和公开发布来源证明仍属后续工作。
 
-## Extension guidance
+## 扩展指引
 
-Keep new functionality within these boundaries unless there is an approved design change:
+除非已有获批的设计变更，否则新增功能应保持在以下边界内：
 
-- Preserve a user-triggered, local-file entry model.
-- Keep FFmpeg external and process invocation shell-free.
-- Preserve explicit save choices, source/destination collision checks, and temporary-write cleanup.
-- Add pure logic tests when possible; separate manual Finder/macOS validation from XCTest evidence.
-- Document any change to shortcut behavior, media-write semantics, external process discovery, or network behavior in `README.md` and `SECURITY.md`.
+- 保持用户主动触发、以本地文件为入口的模型。
+- 保持 FFmpeg 外部安装，进程调用不经 shell。
+- 保持明确的保存选择、源/目标冲突检查与临时写入清理。
+- 尽可能添加纯逻辑测试；将手动 Finder/macOS 验证与 XCTest 证据分开记录。
+- 当快捷键行为、媒体写入语义、外部进程发现或网络行为改变时，在 `README.md` 与 `SECURITY.md` 中记录。

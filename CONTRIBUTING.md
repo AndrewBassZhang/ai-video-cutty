@@ -1,71 +1,71 @@
-# Contributing to Finder Media Preview
+# 为 AI Video Cutty 贡献
 
-Thanks for considering a contribution. Finder Media Preview is a small macOS SwiftPM prototype, so focused, well-evidenced changes are more useful than broad rewrites.
+感谢您考虑贡献。AI Video Cutty 是小型 macOS SwiftPM 原型，因此有明确证据、聚焦的问题修复比大范围重写更有价值。
 
-## Before you start
+## 开始前
 
-- Read the [architecture overview](Docs/ARCHITECTURE.md) and the relevant source file before proposing a design change.
-- Search existing discussions and issues in the hosting repository when they are available.
-- Keep a change scoped to one user-visible problem or one well-defined maintenance need.
-- Do not include media files, personal metadata, credentials, or generated build artifacts in a contribution.
+- 提出设计变更前，请阅读[架构说明](Docs/ARCHITECTURE.md)和相关源码文件。
+- 在可用时，先搜索托管仓库中已有的讨论与 issue。
+- 每项变更应聚焦于一个用户可见问题或一个定义明确的维护需求。
+- 请勿在贡献中包含媒体文件、个人元数据、凭证或生成的构建产物。
 
-## Local setup
+## 本地环境
 
-Requirements:
+要求：
 
-- macOS 13 or later.
-- Xcode Command Line Tools.
-- A Swift toolchain compatible with the Swift 6 package manifest.
+- macOS 13 或更高版本。
+- Xcode Command Line Tools。
+- 与 Swift 6 包清单兼容的 Swift 工具链。
 
-From the repository root:
+在仓库根目录运行：
 
 ```zsh
 swift build
 swift test
 ```
 
-If your terminal is running under Rosetta on Apple Silicon, use the native test command:
+若 Apple Silicon 的终端运行在 Rosetta 下，请使用原生测试命令：
 
 ```zsh
 arch -arm64 swift test
 ```
 
-`Scripts/build.sh` creates a local app bundle for manual testing. `Scripts/package_dmg.sh` packages an already-built app bundle and deliberately does not overwrite an existing release DMG. Do not submit either generated output unless maintainers explicitly request it.
+`Scripts/build.sh` 会创建用于手动测试的本地应用包。`Scripts/package_dmg.sh` 会打包已构建的应用包，并刻意不覆盖已有发布 DMG。除非维护者明确要求，请勿提交任一生成产物。
 
-## Contribution expectations
+## 贡献要求
 
-1. Describe the user problem, affected media type, and expected behavior.
-2. Make the smallest durable change that addresses it.
-3. Add or update tests for logic changes. Preserve coverage for validation, save decisions, media routing, and keyboard behavior when those areas are touched.
-4. Run the relevant build and test commands locally, then state exactly what you ran and what remains unverified.
-5. Update user-facing documentation when behavior, safety boundaries, requirements, or shortcuts change.
+1. 说明用户问题、受影响媒体类型和预期行为。
+2. 做出能解决问题的最小且持久的变更。
+3. 逻辑变更应新增或更新测试。修改相关区域时，保留验证、保存决策、媒体路由和键盘行为的测试覆盖。
+4. 在本地运行相关构建与测试命令，并准确说明运行了什么及哪些内容尚未验证。
+5. 当行为、安全边界、要求或快捷键变化时，更新面向用户的文档。
 
-For UI, Finder Service, or media-decoder changes, distinguish code-level tests from manual macOS acceptance. A passing unit test does not prove Finder registration, Gatekeeper behavior, TCC permissions, external-display placement, or codec behavior on every macOS version.
+对于界面、Finder 服务或媒体解码器变更，请区分代码级测试与手动 macOS 验收。通过单元测试并不能证明 Finder 注册、Gatekeeper 行为、TCC 权限、外接显示器位置或所有 macOS 版本的编解码器行为。
 
-## Change boundaries
+## 变更边界
 
-- Preserve the local-first behavior. Do not add cloud uploads, analytics, network calls, background daemons, or third-party media binaries without a separately discussed design and security review.
-- FFmpeg remains external and user-installed. Do not bundle a binary or make the installer run automatically.
-- Preserve explicit user control over writes. New-file exports must not overwrite a source or occupied destination; source replacement must remain an explicit UI choice.
-- Keep process launches shell-free. Pass executable URLs and argument arrays to `Process`; do not construct shell command strings from media paths or UI text.
-- Maintain compatibility with macOS 13 unless a supported-platform decision is documented first.
+- 保持优先本地运行的行为。未经单独讨论的设计和安全审查，不得新增云上传、分析、网络调用、后台守护进程或第三方媒体二进制文件。
+- FFmpeg 仍应外部安装且由用户主动选择；不得打包二进制文件或自动运行安装器。
+- 保持用户对写入操作的明确控制。新文件导出不得覆盖源文件或已占用目标；替换源文件必须保持为明确界面选择。
+- 保持进程启动不经 shell。向 `Process` 传递可执行文件 URL 和参数数组；不得用媒体路径或界面文本构造 shell 命令字符串。
+- 除非先记录支持平台的决策，否则保持兼容 macOS 13。
 
-## Pull request checklist
+## 拉取请求检查表
 
-- [ ] The change has a concise problem statement and scope.
-- [ ] Source, test, and documentation changes are limited to the stated purpose.
-- [ ] Relevant tests pass locally.
-- [ ] New or changed file writes have failure, collision, and cancellation behavior considered.
-- [ ] New FFmpeg/ffprobe arguments are reviewed for source-path handling and no-shell execution.
-- [ ] UI behavior has manual verification notes where unit tests cannot prove it.
-- [ ] No private media, secrets, local paths, build directories, or release binaries are included.
+- [ ] 变更有简洁的问题说明和范围。
+- [ ] 源码、测试和文档变更均限于所述目的。
+- [ ] 相关测试在本地通过。
+- [ ] 已考虑新增或变更文件写入的失败、冲突和取消行为。
+- [ ] 已审查新增 FFmpeg/`ffprobe` 参数的源路径处理与无 shell 执行。
+- [ ] 单元测试无法证明的界面行为附有手动验证说明。
+- [ ] 未包含私密媒体、密钥、本地路径、构建目录或发布二进制文件。
 
-## Reporting bugs and proposing features
+## 报告缺陷与提出功能建议
 
-Bug reports are most actionable when they include the macOS version, media type/container/codec (without sharing sensitive media), expected result, actual result, and a reproducible sequence. For crashes or decoder issues, include a minimal non-sensitive sample only when you are authorized to share it.
+缺陷报告在包含 macOS 版本、媒体类型/容器/编解码器（不分享敏感媒体）、预期结果、实际结果和可复现步骤时最易处理。对于崩溃或解码器问题，仅在有权分享时提供最小且不敏感的样本。
 
-Use the private process in [SECURITY.md](SECURITY.md) for security-sensitive findings. Do not post a public exploit or a sensitive file path while a fix is being coordinated.
+安全敏感发现请使用 [SECURITY.md](SECURITY.md) 中的私密流程。在协调修复期间，请勿公开发布利用方式或敏感文件路径。
 
-## License and conduct
+## 许可证与行为
 
-By contributing, you agree that your contribution will be licensed under the repository's [MIT License](LICENSE). Please also follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+提交贡献即表示您同意该贡献采用仓库的 [MIT License](LICENSE)。同时请遵守[行为准则](CODE_OF_CONDUCT.md)。

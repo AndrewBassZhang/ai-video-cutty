@@ -27,13 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func installMainMenu() {
         let main = NSMenu()
         let appItem = NSMenuItem()
-        let appMenu = NSMenu(title: "Media Preview")
+        let appMenu = NSMenu(title: "AI Video Cutty")
         let settings = NSMenuItem(title: "设置…", action: #selector(showSettings(_:)), keyEquivalent: ",")
         settings.keyEquivalentModifierMask = [.command]
         settings.target = self
         appMenu.addItem(settings)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "退出 Media Preview", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "退出 AI Video Cutty", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
         NSApp.mainMenu = main
@@ -951,15 +951,21 @@ enum ABTrimExportError: LocalizedError {
 }
 
 /// Finds optional external media tools without using a shell. The app never
-/// bundles a binary. Its user-managed installer directory wins over standard
-/// locations and PATH so both FFmpeg and FFprobe resolve as an installed pair.
+/// bundles a binary. Its current user-managed installer directory wins; the
+/// prior Finder Media Preview directory remains a migration fallback before
+/// standard locations and PATH, so both FFmpeg and FFprobe resolve as a pair.
 enum ExternalMediaToolLocator {
     static func candidateURLs(named executableName: String, environment: [String: String]) -> [URL] {
         let homeDirectory = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
-        let userManagedDirectory = URL(fileURLWithPath: homeDirectory, isDirectory: true)
-            .appendingPathComponent("Library/Application Support/Finder Media Preview/bin", isDirectory: true)
+        let applicationSupportDirectory = URL(fileURLWithPath: homeDirectory, isDirectory: true)
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        let userManagedDirectory = applicationSupportDirectory
+            .appendingPathComponent("AI Video Cutty/bin", isDirectory: true)
+        let legacyUserManagedDirectory = applicationSupportDirectory
+            .appendingPathComponent("Finder Media Preview/bin", isDirectory: true)
         let standardPaths = [
             userManagedDirectory.appendingPathComponent(executableName).path,
+            legacyUserManagedDirectory.appendingPathComponent(executableName).path,
             "/opt/homebrew/bin/\(executableName)",
             "/usr/local/bin/\(executableName)",
             "/usr/bin/\(executableName)"

@@ -1,24 +1,25 @@
-# Changelog
+# 更新日志
 
-All notable changes to Finder Media Preview will be documented in this file. The format follows the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions will be added when the project establishes tagged releases.
+AI Video Cutty 的所有重要变更都会记录在本文件中。格式参考 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，项目建立带标签的发布版后会加入版本号。
 
-## [Unreleased]
+## [未发布]
 
-### Added
+### 新增
 
-- Initial open-source documentation set: project overview, contribution guidance, security policy, code of conduct, architecture overview, and changelog.
+- 初始开源文档集：项目概览、贡献指南、安全策略、行为准则、架构说明和更新日志。
 
-### Changed
+### 变更
 
-- Nothing released yet.
+- 对外项目名称调整为 AI Video Cutty，仓库地址为 `AndrewBassZhang/ai-video-cutty`。
+- 尚无已发布版本。
 
-## Prototype baseline
+## 原型基线
 
-This is a source snapshot, not a published version or release claim. The current prototype includes:
+这是源码快照，不是已发布版本或发布声明。当前原型包括：
 
-- Finder Service input for one local regular media file.
-- Video, audio, and image preview through macOS frameworks.
-- Playback controls, A/B markers and looping, timeline/waveform support, metadata display, and configurable shortcuts.
-- Optional external-FFmpeg export paths and local image save workflows.
+- Finder 服务输入一个本地普通媒体文件。
+- 通过 macOS 框架预览视频、音频和图像。
+- 播放控制、A/B 标记与循环、时间线/波形支持、元数据显示和可配置快捷键。
+- 可选外部 FFmpeg 导出路径与本地图像保存流程。
 
-Historical release notes have not been reconstructed for this prototype. Add dated, versioned entries only when a release artifact and its verification evidence exist.
+本原型没有重建历史发行说明。只有在发布产物及其验证证据存在时，才添加带日期和版本的条目。

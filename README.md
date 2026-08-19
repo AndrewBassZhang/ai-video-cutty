@@ -1,156 +1,166 @@
-# Finder Media Preview
+# AI Video Cutty
 
-Finder Media Preview is a community-built, local-first macOS media preview utility. Select a local video, audio file, or image in Finder, open it through the app's Finder Service, and review it in a dedicated preview panel with transport, metadata, and focused export tools.
+AI Video Cutty 是一款社区维护、优先本地运行的 macOS 媒体预览工具：从 Finder 选中本地视频、音频或图像后，可通过 Finder 服务在独立预览面板中查看、定位、标记和导出。
 
-> This project is community-built and is not affiliated with, endorsed by, or sponsored by Apple or OpenAI.
+> 本项目由社区维护，与 Apple 或 OpenAI 没有隶属、背书或赞助关系。
 
-## What it does
+## 一键下载并打开安装盘（推荐）
 
-- Opens one selected local regular file from Finder, or a local file path passed at launch.
-- Previews video, audio, and decodable images using macOS frameworks.
-- Provides playback, looping, A/B markers, frame stepping, shuttle playback, timeline thumbnails, waveform display for audio, volume controls, and adjustable playback speed.
-- Shows native media metadata and image metadata; richer media metadata is used when `ffprobe` is available.
-- Lets you rotate or mirror the current video or image view. These display transforms can be baked into a newly exported file.
-- Exports exact A/B video or audio trims through an optional external FFmpeg installation.
-- Exports an audio stream without re-encoding when the chosen container supports it.
-- Supports image crop/save, JPEG conversion, and JPEG compression workflows.
-- Stores customizable preview shortcuts in the local user defaults database. `⌘S` remains reserved for the Finder entry point.
-
-## Requirements
-
-- macOS 13 Ventura or later.
-- Xcode Command Line Tools and a Swift toolchain compatible with the package's Swift 6 manifest, for source builds.
-- FFmpeg is optional for normal preview. It is required for A/B trim export and audio-stream export; `ffprobe` is optional for enhanced media metadata.
-
-The app bundle does **not** contain FFmpeg or ffprobe. The optional installer keeps its externally downloaded pair in `~/Library/Application Support/Finder Media Preview/bin`; the app checks that user-managed directory first, then standard system locations and the launch environment's `PATH`.
-
-## Build and test
-
-Run these commands from the repository root.
+可使用下列命令下载最新版 DMG 并直接打开安装盘：
 
 ```zsh
+curl -fL https://github.com/AndrewBassZhang/ai-video-cutty/releases/latest/download/AI-Video-Cutty-macOS.dmg -o "$HOME/Downloads/AI-Video-Cutty-macOS.dmg" && open "$HOME/Downloads/AI-Video-Cutty-macOS.dmg"
+```
+
+1. 将 `AI Video Cutty.app` 拖到 `Applications`（应用程序）图标。
+2. 首次启动时按住 Control 点按应用，选择“打开”，再在确认框中选择“打开”。
+3. 需要精确 A/B 裁切导出、原码流音频导出或更丰富元数据时，可在 DMG 中主动运行可选的 FFmpeg 安装器；它不使用 Homebrew 或 `sudo`。
+
+## 功能概览
+
+- 从 Finder 打开一个已选中的本地普通文件，也可在启动时传入本地文件路径。
+- 使用 macOS 框架预览视频、音频与可解码图像。
+- 提供播放、循环、A/B 标记、逐帧、穿梭播放、时间线缩略图、音频波形、音量控制和可调播放速度。
+- 显示原生媒体与图像元数据；安装 `ffprobe` 后可获得更丰富的媒体元数据。
+- 可旋转或镜像当前视频、图像视图，并将这些显示变换写入新导出的文件。
+- 通过用户主动安装的外部 FFmpeg 精确导出 A/B 视频或音频片段。
+- 在目标容器支持时，不经重新编码导出音频码流。
+- 支持图像裁切保存、JPEG 转换和 JPEG 压缩。
+- 将可自定义的预览快捷键保存在本机用户默认设置中；`⌘S` 始终保留给 Finder 入口。
+
+## 系统要求与可选组件
+
+- macOS 13 Ventura 或更高版本。
+- 从源码构建需要 Xcode Command Line Tools，以及与 Swift 6 包清单兼容的 Swift 工具链。
+- 普通预览不需要 FFmpeg；A/B 裁切导出和原码流音频导出需要 FFmpeg；`ffprobe` 为增强媒体元数据的可选组件。
+
+应用包不包含 FFmpeg 或 `ffprobe`。可选安装器将下载的两个外部可执行文件安装到 `~/Library/Application Support/AI Video Cutty/bin`；应用先查询该用户管理目录，再查询标准系统位置及启动环境的 `PATH`。为兼容旧安装，当新目录中没有可用程序时，应用会继续查询旧目录 `~/Library/Application Support/Finder Media Preview/bin`；新安装不会写入该旧目录。
+
+## 从源码构建与测试
+
+克隆仓库后，在仓库根目录运行：
+
+```zsh
+git clone https://github.com/AndrewBassZhang/ai-video-cutty.git
+cd ai-video-cutty
 swift build -c release
 swift test
 ```
 
-If the command is being run from a Rosetta/x86 shell on Apple Silicon, run the tests natively instead:
+若 Apple Silicon 机器的终端运行在 Rosetta/x86 环境，请改为原生执行测试：
 
 ```zsh
 arch -arm64 swift test
 ```
 
-To build the distributable app bundle used by this prototype:
+构建可分发的应用包：
 
 ```zsh
 Scripts/build.sh
 ```
 
-The script creates `build/MediaPreview.app`, copies the Chinese manual and optional FFmpeg installer script into the bundle, creates `AppIcon.icns`, and applies ad-hoc signing for local use. It recreates that build bundle on each run.
+脚本会生成 `build/AI Video Cutty.app`，将中文使用说明和可选 FFmpeg 安装脚本复制进应用包，生成 `AppIcon.icns`，并进行仅供本地使用的 ad-hoc 签名。每次运行都会重建该应用包。
 
-To create a drag-to-install disk image after the app bundle exists:
+应用包生成后，可创建“拖入应用程序”安装盘：
 
 ```zsh
 Scripts/package_dmg.sh
 ```
 
-This writes `dist/Finder-Media-Preview-macOS.dmg` and intentionally refuses to overwrite an existing DMG.
+该脚本输出 `dist/AI-Video-Cutty-macOS.dmg`，并会拒绝覆盖已有的 DMG。
 
-## Install
+## 安装说明
 
-### From a local build
+### 使用本地构建
 
-1. Run `Scripts/build.sh`.
-2. Drag `build/MediaPreview.app` into `/Applications`.
-3. Launch the app once, then select a local media file in Finder.
+1. 运行 `Scripts/build.sh`。
+2. 将 `build/AI Video Cutty.app` 拖入 `/Applications`。
+3. 启动应用一次，再在 Finder 中选中一个本地媒体文件。
 
-The prototype build uses ad-hoc signing; it is not Developer ID signed or notarized. If macOS blocks the first launch, Control-click the app, choose **Open**, then confirm **Open**. Review the source and the app bundle before bypassing macOS warnings.
+原型构建使用 ad-hoc 签名，未进行 Developer ID 签名或 Apple 公证。若 macOS 阻止首次启动，请按住 Control 点按应用，选择“打开”，再在确认框中选择“打开”。绕过系统警告前，请自行审阅源码与应用包。
 
-### From a packaged DMG
+### 使用 DMG
 
-1. Open `Finder-Media-Preview-macOS.dmg`.
-2. Drag **Finder Media Preview.app** to **Applications**.
-3. Control-click the app in **Applications**, choose **Open**, then confirm **Open** on the first launch. This prototype is ad-hoc signed and not notarized.
-4. Reopen the app before using the Finder Service. The DMG also includes `安装说明.txt`, `使用说明.md`, third-party notices, and an optional FFmpeg installer.
+1. 打开 `AI-Video-Cutty-macOS.dmg`。
+2. 将 **AI Video Cutty.app** 拖到 **Applications**。
+3. 首次启动时按住 Control 点按 **Applications** 中的应用，选择“打开”，再在确认框中选择“打开”。该原型使用 ad-hoc 签名，尚未公证。
+4. 使用 Finder 服务前请重新打开应用。DMG 同时提供 `安装说明.txt`、`使用说明.md`、第三方声明与可选 FFmpeg 安装器。
 
-## Finder Service and shortcut setup
+## 访达服务与快捷键设置
 
-After installing and launching the app once:
+安装并至少启动一次应用后：
 
-1. In Finder, select one local media file.
-2. Invoke the app's media-preview entry from **Finder > Services**.
-3. To assign or restore a Finder shortcut, open **System Settings > Keyboard > Keyboard Shortcuts > Services**, locate the installed media-preview service, and set its shortcut. The intended Finder shortcut is `⌘S`; test it with Finder as the frontmost app.
+1. 在 Finder 中选中一个本地媒体文件。
+2. 从 **Finder > 服务** 调用 **显示 AI Video Cutty**。
+3. 若要指定或恢复 Finder 快捷键，请打开 **系统设置 > 键盘 > 键盘快捷键 > 服务**，找到 **显示 AI Video Cutty** 并设置快捷键。预期的 Finder 快捷键为 `⌘S`；请在 Finder 位于前台时测试。
 
-The application deliberately reserves `⌘S` in its own shortcut editor, so a configurable in-app action cannot shadow the Finder entry point. The Finder Service accepts only local regular files and uses the first eligible selected file; directories, web URLs, and additional selected files are not batch-opened.
+应用会在自己的快捷键编辑器中保留 `⌘S`，避免可配置的应用内操作遮蔽 Finder 入口。Finder 服务仅接受本地普通文件，并使用第一个符合条件的已选文件；目录、网页 URL 与额外选中的文件不会批量打开。
 
-## Keyboard shortcuts
+## 当前默认快捷键
 
-These are the current default bindings. They can be changed in **Media Preview > Settings…** except for the dedicated Finder `⌘S` entry point.
+除专属 Finder `⌘S` 入口外，下列默认快捷键均可在 **AI Video Cutty > 设置…** 中修改。
 
-| Action | Default |
+| 操作 | 默认快捷键 |
 | --- | --- |
-| Play / pause | `Space` |
-| Close preview | `⌘Q` |
-| Jump backward / forward 5% | `⌘←` / `⌘→` |
-| Shuttle reverse / pause / shuttle forward | `J` / `K` / `L` |
-| Set A / B marker | `I` / `O` |
-| Restart from the beginning | `R` |
-| Toggle loop | `P` |
-| Clear A/B markers | `X` |
-| Mute / unmute | `M` |
-| Reset video or image zoom | `0` |
-| Paused video frame step | `←` / `→` |
-| Playing video temporary shuttle | hold `←` / `→` |
-| Volume down / up | `↓` / `↑` |
+| 播放 / 暂停 | `Space` |
+| 关闭预览 | `⌘Q` |
+| 后跳 / 前跳 5% | `⌘←` / `⌘→` |
+| 倒向穿梭 / 暂停 / 正向穿梭 | `J` / `K` / `L` |
+| 设置 A / B 标记 | `I` / `O` |
+| 从开头重新播放 | `R` |
+| 切换循环 | `P` |
+| 清除 A/B 标记 | `X` |
+| 静音 / 取消静音 | `M` |
+| 重置视频或图像缩放 | `0` |
+| 暂停视频时逐帧 | `←` / `→` |
+| 播放视频时临时穿梭 | 按住 `←` / `→` |
+| 降低 / 提高音量 | `↓` / `↑` |
 
-Plain arrow controls are reserved transport controls. For a playing video, releasing a held left or right arrow restores the previously selected forward playback speed.
+不带修饰键的方向键为专属传输控制。播放视频时，松开按住的左或右方向键会恢复之前选择的正向播放速度。
 
-## FFmpeg: optional, external, and explicit
+## 可选、外部且明确触发的 FFmpeg
 
-FFmpeg is not needed to open or review media. It is required for precise A/B trim export and audio-stream export; `ffprobe` adds richer media metadata. If either is unavailable, the app shows an install option; it does not silently install anything.
+打开或查看媒体不需要 FFmpeg。精确 A/B 裁切导出与原码流音频导出需要 FFmpeg；`ffprobe` 可补充媒体元数据。若缺少任一工具，应用会显示安装选项；不会静默安装任何内容。
 
-The packaged installer runs only after you explicitly open it or choose **Install FFmpeg…**. It downloads the external `ffmpeg-static b6.1.1` runtime to `~/Library/Application Support/Finder Media Preview/bin`, with no administrator privileges and no bundled binary. Its default transport is `https://cdn.npmmirror.com/binaries/ffmpeg-static/b6.1.1`; only a connection or HTTP failure falls back to the fixed upstream release transport at `https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1`. It verifies the pinned SHA-256 of both downloaded gzip assets before installation; a digest mismatch stops rather than falling back.
+仅当您主动打开打包的安装器，或在应用中选择 **安装 FFmpeg…** 时，安装器才会运行。它将外部 `ffmpeg-static b6.1.1` 运行时下载到 `~/Library/Application Support/AI Video Cutty/bin`，不请求管理员权限、不使用 Homebrew 或 `sudo`，也不在应用包中附带二进制文件。默认传输地址为 `https://cdn.npmmirror.com/binaries/ffmpeg-static/b6.1.1`；仅在连接或 HTTP 请求失败时，才回退到固定上游发布地址 `https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1`。两个下载的 gzip 资源必须通过固定 SHA-256 校验；摘要不匹配会立即停止，不会再回退。
 
-The external runtime is GPL-3.0-or-later. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the exact source, license link, asset names, and digests. You may instead install FFmpeg yourself. Restart the app after installation so its executable check is refreshed.
+外部运行时采用 GPL-3.0-or-later 许可证。准确来源、许可证链接、资源名称和摘要见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。您也可以自行安装 FFmpeg；安装后请重新打开应用以刷新可执行文件检查。
 
-## Privacy and offline behavior
+## 隐私与离线行为
 
-Core preview, editing, metadata fallback, and file-save workflows run locally. The inspected application code contains no account sign-in, telemetry client, cloud upload, or network media processing path. The only networked workflow included in this prototype is the optional, user-initiated external-runtime download described above.
+核心预览、编辑、元数据回退和文件保存流程均在本地执行。当前审阅的应用代码中没有账号登录、遥测客户端、云上传或远程媒体处理路径。该原型唯一包含的联网流程是上述由用户主动触发的外部运行时下载。
 
-The Finder Service receives the selected file URL from the Finder pasteboard. Custom shortcut bindings are stored locally in user defaults. Media files are read from their local paths and are written only through an export or save action you choose. See [SECURITY.md](SECURITY.md) for the exact write and external-tool boundaries.
+Finder 服务通过 Finder 粘贴板接收所选文件的 URL。自定义快捷键保存在本机用户默认设置中。媒体文件从本地路径读取，只会在您主动选择导出或保存时写入。具体写入与外部工具边界见 [SECURITY.md](SECURITY.md)。
 
-## Limitations
+## 限制
 
-- Media playback and decoding support depend on the codecs exposed by the installed macOS version; unsupported formats may not open.
-- The app opens one eligible Finder selection at a time; it is not a batch browser or library manager.
-- Exact A/B trim export re-encodes video and audio. It is not a byte-for-byte source copy.
-- Audio-stream export preserves packets where possible, so A/B boundaries are packet-aligned rather than sample-accurate and a chosen destination container may reject the source codec.
-- Image crop save offers an explicit **Overwrite Save** choice. That action replaces the source without creating a backup; use **Save as New File** if you need to preserve it.
-- This prototype is ad-hoc signed and not notarized.
+- 媒体播放和解码能力取决于已安装 macOS 版本提供的编解码器；不支持的格式可能无法打开。
+- 应用一次只打开一个符合条件的 Finder 选中项；它不是批量浏览器或媒体库管理器。
+- 精确 A/B 裁切导出会重新编码视频和音频，不是源文件的逐字节副本。
+- 原码流音频导出会尽量保留音频包，因此 A/B 边界按音频包对齐而非逐采样精确；所选目标容器也可能拒绝源编解码器。
+- 图像裁切保存提供明确的 **覆盖保存** 选项；该操作会替换源文件且不创建备份。需要保留源文件时，请使用 **另存为新文件**。
+- 该原型使用 ad-hoc 签名，尚未公证。
 
-## Roadmap
+## 后续方向
 
-Potential community priorities, not release commitments:
+以下是可能的社区方向，并非发布承诺：
 
-- Developer ID signing and notarization for distributed builds.
-- A documented codec/support matrix and clearer incompatibility diagnostics.
-- Accessibility and real Finder-Service end-to-end test coverage.
-- A formal release process, versioned release notes, and a vulnerability-reporting contact.
+- 为分发构建提供 Developer ID 签名与公证。
+- 提供已记录的编解码器支持矩阵和更清晰的不兼容诊断。
+- 增加辅助功能与真实 Finder 服务端到端测试覆盖。
+- 建立正式发布流程、带版本的发行说明和漏洞报告联系人。
 
-## Documentation
+## 文档
 
-- [Architecture](Docs/ARCHITECTURE.md)
-- [DMG installation guide](Docs/安装说明.txt)
-- [Chinese user manual](Docs/使用说明.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Changelog](CHANGELOG.md)
+- [架构说明](Docs/ARCHITECTURE.md)
+- [DMG 安装说明](Docs/安装说明.txt)
+- [中文使用说明](Docs/使用说明.md)
+- [第三方声明](THIRD_PARTY_NOTICES.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
+- [行为准则](CODE_OF_CONDUCT.md)
+- [更新日志](CHANGELOG.md)
 
-## License
+## 许可证
 
-Finder Media Preview is available under the [MIT License](LICENSE).
-
-## 中文简介
-
-Finder Media Preview 是一个本地运行的 macOS 媒体预览原型：可从 Finder 的服务入口打开一条本地视频、音频或图片，并提供播放、A/B 循环、元数据、旋转/镜像、裁切和另存等操作。普通预览不需要 FFmpeg；精确 A/B 导出和原码流音频导出需要用户自行安装的 FFmpeg，应用不会静默下载或安装它。当前版本为社区构建，与 Apple 和 OpenAI 没有隶属、背书或合作关系。
+AI Video Cutty 采用 [MIT License](LICENSE)。

@@ -41,8 +41,9 @@ enum VideoCropPreset: Int, CaseIterable, Equatable {
         }
     }
 
-    /// Width divided by height. Free and original intentionally do not lock a
-    /// ratio. The original case means no crop filter is sent to FFmpeg.
+    /// Width divided by height. Free intentionally does not lock a ratio. An
+    /// active `original` frame takes its ratio from the source canvas so its
+    /// four handles can resize predictably without changing the source shape.
     func aspectRatio(for orientation: VideoCropOrientation) -> CGFloat? {
         switch self {
         case .square: return 1
@@ -76,7 +77,19 @@ struct VideoCropSelection: Equatable {
     }
 
     var title: String { preset.title(for: orientation ?? .horizontal) }
-    var aspectRatio: CGFloat? { preset.aspectRatio(for: orientation ?? .horizontal) }
+
+    /// Original is normally represented by `nil` at export time. While it is
+    /// active in the editor, however, it is a full-source fixed-ratio frame so
+    /// users always have visible, usable corner handles on first open.
+    var aspectRatio: CGFloat? {
+        if preset == .original {
+            guard let canvasSize, let bounds = VideoCropMath.sourceBounds(for: canvasSize) else {
+                return VideoCropMath.displayRatio(for: sourceRect)
+            }
+            return VideoCropMath.displayRatio(for: bounds)
+        }
+        return preset.aspectRatio(for: orientation ?? .horizontal)
+    }
 
     var effectiveWidth: Int { Int(sourceRect.width.rounded()) }
     var effectiveHeight: Int { Int(sourceRect.height.rounded()) }
@@ -244,19 +257,26 @@ struct VideoDisplayTransform: Equatable {
     }
 }
 
-enum CropResizeHandle: Equatable {
+enum CropResizeHandle: CaseIterable, Equatable {
     case topLeft, topRight, bottomLeft, bottomRight
 }
 
+struct CropEditorHandleGeometry: Equatable {
+    let handle: CropResizeHandle
+    let center: NSPoint
+    let drawingRect: NSRect
+    let hitRect: NSRect
+}
+
 /// Keeps the interactive editor's preset contract explicit and testable:
-/// fixed presets can move without losing their aspect ratio, while only the
-/// deliberately selected free mode exposes resizing.
+/// every active crop frame has corner handles; fixed presets retain their
+/// ratio while free mode retains independent width/height resizing.
 enum VideoCropEditorInteraction: Equatable {
     case pan
     case resize
 
     static func allowsResize(for preset: VideoCropPreset) -> Bool {
-        preset == .free
+        true
     }
 
     func resultingPreset(from currentPreset: VideoCropPreset) -> VideoCropPreset {
@@ -264,7 +284,7 @@ enum VideoCropEditorInteraction: Equatable {
         case .pan:
             return currentPreset
         case .resize:
-            return .free
+            return currentPreset
         }
     }
 }
@@ -354,9 +374,89 @@ enum VideoCropMath {
         return aligned(CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY), in: sourceSize)
     }
 
+    /// Resizes a fixed-ratio crop from one corner while leaving the diagonal
+    /// corner exactly where it was. The requested size is selected from the
+    /// dominant drag axis, then made even deterministically for yuv420p.
+    static func resizedFixed(_ sourceRect: CGRect, handle: CropResizeHandle, by delta: CGPoint, aspectRatio: CGFloat, in sourceSize: CGSize) -> CGRect? {
+        guard aspectRatio.isFinite, aspectRatio > 0,
+              let bounds = sourceBounds(for: sourceSize),
+              let rect = aligned(sourceRect, in: sourceSize) else { return nil }
+        guard delta.x != 0 || delta.y != 0 else { return rect }
+
+        let expansion: (width: CGFloat, height: CGFloat)
+        let anchor: CGPoint
+        let maximumSize: CGSize
+        switch handle {
+        case .topLeft:
+            expansion = (-delta.x, -delta.y)
+            anchor = CGPoint(x: rect.maxX, y: rect.maxY)
+            maximumSize = CGSize(width: anchor.x - bounds.minX, height: anchor.y - bounds.minY)
+        case .topRight:
+            expansion = (delta.x, -delta.y)
+            anchor = CGPoint(x: rect.minX, y: rect.maxY)
+            maximumSize = CGSize(width: bounds.maxX - anchor.x, height: anchor.y - bounds.minY)
+        case .bottomLeft:
+            expansion = (-delta.x, delta.y)
+            anchor = CGPoint(x: rect.maxX, y: rect.minY)
+            maximumSize = CGSize(width: anchor.x - bounds.minX, height: bounds.maxY - anchor.y)
+        case .bottomRight:
+            expansion = (delta.x, delta.y)
+            anchor = CGPoint(x: rect.minX, y: rect.minY)
+            maximumSize = CGSize(width: bounds.maxX - anchor.x, height: bounds.maxY - anchor.y)
+        }
+
+        let horizontalScale = (rect.width + expansion.width) / rect.width
+        let verticalScale = (rect.height + expansion.height) / rect.height
+        let scale = abs(horizontalScale - 1) >= abs(verticalScale - 1) ? horizontalScale : verticalScale
+        guard let size = fixedSize(
+            desiredHeight: rect.height * scale,
+            aspectRatio: aspectRatio,
+            maximumSize: maximumSize
+        ) else { return nil }
+
+        switch handle {
+        case .topLeft:
+            return CGRect(x: anchor.x - size.width, y: anchor.y - size.height, width: size.width, height: size.height)
+        case .topRight:
+            return CGRect(x: anchor.x, y: anchor.y - size.height, width: size.width, height: size.height)
+        case .bottomLeft:
+            return CGRect(x: anchor.x - size.width, y: anchor.y, width: size.width, height: size.height)
+        case .bottomRight:
+            return CGRect(x: anchor.x, y: anchor.y, width: size.width, height: size.height)
+        }
+    }
+
     static func displayRatio(for rect: CGRect) -> CGFloat? {
         guard rect.width > 0, rect.height > 0 else { return nil }
         return rect.width / rect.height
+    }
+
+    private static func fixedSize(desiredHeight: CGFloat, aspectRatio: CGFloat, maximumSize: CGSize) -> CGSize? {
+        let maximumWidth = evenFloor(maximumSize.width)
+        var maximumHeight = evenFloor(min(maximumSize.height, maximumWidth / aspectRatio))
+        while maximumHeight >= 2 && fixedWidth(forHeight: maximumHeight, aspectRatio: aspectRatio) > maximumWidth {
+            maximumHeight -= 2
+        }
+        guard maximumHeight >= 2 else { return nil }
+
+        let requestedMinimum = max(2, evenNearest(minimumDimension))
+        var minimumHeight = max(2, evenNearest(max(requestedMinimum, requestedMinimum / aspectRatio)))
+        while minimumHeight <= maximumHeight && fixedWidth(forHeight: minimumHeight, aspectRatio: aspectRatio) < requestedMinimum {
+            minimumHeight += 2
+        }
+        if minimumHeight > maximumHeight {
+            minimumHeight = 2
+        }
+
+        let requestedHeight = max(2, evenNearest(desiredHeight))
+        let height = min(maximumHeight, max(minimumHeight, requestedHeight))
+        let width = fixedWidth(forHeight: height, aspectRatio: aspectRatio)
+        guard width >= 2, width <= maximumWidth else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    private static func fixedWidth(forHeight height: CGFloat, aspectRatio: CGFloat) -> CGFloat {
+        max(2, evenNearest(height * aspectRatio))
     }
 
     private static func evenFloor(_ value: CGFloat) -> CGFloat {
@@ -378,21 +478,22 @@ enum CropEditorResult: Equatable {
 /// A small visual editor rather than a numeric crop form. Its drawing space is
 /// letterboxed, but edits are immediately mapped back to source pixels.
 final class CropEditorView: NSView {
-    var sourceSize: CGSize = .zero { didSet { needsDisplay = true } }
+    var sourceSize: CGSize = .zero { didSet { redrawAndInvalidateInteraction() } }
     var previewImage: NSImage? { didSet { needsDisplay = true } }
-    var selection: VideoCropSelection? { didSet { needsDisplay = true } }
+    var selection: VideoCropSelection? { didSet { redrawAndInvalidateInteraction() } }
     var selectionChanged: ((CGRect, VideoCropEditorInteraction) -> Void)?
 
-    private enum DragMode { case pan(CGRect), resize(CropResizeHandle, CGRect) }
+    private enum DragMode { case pan(CGRect), resize(CropResizeHandle, CGRect, CGFloat?) }
     private var dragMode: DragMode?
     private var dragStart = NSPoint.zero
-    private let handleSize: CGFloat = 10
+    private let handleSize: CGFloat = 12
+    private let handleHitSize: CGFloat = 26
 
     override init(frame frameRect: NSRect = .zero) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = 8
-        toolTip = "自由框选时：拖动画面内移动；拖动四角调整画幅。"
+        toolTip = "拖动画面内移动；拖动四角调整画幅。固定画幅保持比例，自由框选可独立调整宽高。"
     }
 
     required init?(coder: NSCoder) { nil }
@@ -426,11 +527,15 @@ final class CropEditorView: NSView {
         let path = NSBezierPath(rect: renderedCrop)
         path.lineWidth = 2
         path.stroke()
-        if let preset = selection?.preset, VideoCropEditorInteraction.allowsResize(for: preset) {
+        for geometry in cropHandleGeometries {
+            NSColor.black.withAlphaComponent(0.78).setFill()
+            geometry.drawingRect.insetBy(dx: -1, dy: -1).fill()
             NSColor.systemYellow.setFill()
-            for point in handleCenters(for: renderedCrop) {
-                NSRect(x: point.x - handleSize / 2, y: point.y - handleSize / 2, width: handleSize, height: handleSize).fill()
-            }
+            geometry.drawingRect.fill()
+            NSColor.white.withAlphaComponent(0.95).setStroke()
+            let handlePath = NSBezierPath(rect: geometry.drawingRect.insetBy(dx: 0.5, dy: 0.5))
+            handlePath.lineWidth = 1
+            handlePath.stroke()
         }
     }
 
@@ -438,8 +543,8 @@ final class CropEditorView: NSView {
         guard let selection else { return }
         let point = convert(event.locationInWindow, from: nil)
         let cropRect = displayRect(forSourceRect: selection.sourceRect)
-        if VideoCropEditorInteraction.allowsResize(for: selection.preset), let handle = resizeHandle(at: point, in: cropRect) {
-            dragMode = .resize(handle, selection.sourceRect)
+        if let handle = resizeHandle(at: point) {
+            dragMode = .resize(handle, selection.sourceRect, selection.aspectRatio)
         } else if cropRect.contains(point) {
             dragMode = .pan(selection.sourceRect)
         } else {
@@ -461,8 +566,12 @@ final class CropEditorView: NSView {
         case .pan(let original):
             updated = VideoCropMath.moved(original, by: sourceDelta, in: sourceSize)
             interaction = .pan
-        case .resize(let handle, let original):
-            updated = VideoCropMath.resized(original, handle: handle, by: sourceDelta, in: sourceSize)
+        case .resize(let handle, let original, let aspectRatio):
+            if let aspectRatio {
+                updated = VideoCropMath.resizedFixed(original, handle: handle, by: sourceDelta, aspectRatio: aspectRatio, in: sourceSize)
+            } else {
+                updated = VideoCropMath.resized(original, handle: handle, by: sourceDelta, in: sourceSize)
+            }
             interaction = .resize
         }
         guard let updated else { return }
@@ -470,6 +579,21 @@ final class CropEditorView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) { dragMode = nil }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let selection else { return }
+        let cropRect = displayRect(forSourceRect: selection.sourceRect)
+        addCursorRect(cropRect, cursor: .openHand)
+        for geometry in cropHandleGeometries {
+            addCursorRect(geometry.hitRect, cursor: .crosshair)
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.invalidateCursorRects(for: self)
+    }
 
     private var displayedImageRect: CGRect {
         guard sourceSize.width > 0, sourceSize.height > 0 else { return bounds.insetBy(dx: 8, dy: 8) }
@@ -491,25 +615,42 @@ final class CropEditorView: NSView {
         )
     }
 
-    private func handleCenters(for rect: CGRect) -> [NSPoint] {
-        [
-            NSPoint(x: rect.minX, y: rect.maxY),
-            NSPoint(x: rect.maxX, y: rect.maxY),
-            NSPoint(x: rect.minX, y: rect.minY),
-            NSPoint(x: rect.maxX, y: rect.minY)
-        ]
+    var cropHandleGeometries: [CropEditorHandleGeometry] {
+        guard let selection else { return [] }
+        return handleGeometries(for: displayRect(forSourceRect: selection.sourceRect))
     }
 
-    private func resizeHandle(at point: NSPoint, in rect: CGRect) -> CropResizeHandle? {
+    func resizeHandle(at point: NSPoint) -> CropResizeHandle? {
+        cropHandleGeometries.first { $0.hitRect.contains(point) }?.handle
+    }
+
+    private func handleGeometries(for rect: CGRect) -> [CropEditorHandleGeometry] {
+        let previewRect = displayedImageRect
+        let centerInset = min(handleSize / 2, min(previewRect.width, previewRect.height) / 2)
+        let visibleCenterBounds = previewRect.insetBy(dx: centerInset, dy: centerInset)
         let handles: [(CropResizeHandle, NSPoint)] = [
             (.topLeft, NSPoint(x: rect.minX, y: rect.maxY)),
             (.topRight, NSPoint(x: rect.maxX, y: rect.maxY)),
             (.bottomLeft, NSPoint(x: rect.minX, y: rect.minY)),
             (.bottomRight, NSPoint(x: rect.maxX, y: rect.minY))
         ]
-        return handles.first { _, center in
-            NSRect(x: center.x - handleSize, y: center.y - handleSize, width: handleSize * 2, height: handleSize * 2).contains(point)
-        }?.0
+        return handles.map { handle, rawCenter in
+            let center = NSPoint(
+                x: min(max(rawCenter.x, visibleCenterBounds.minX), visibleCenterBounds.maxX),
+                y: min(max(rawCenter.y, visibleCenterBounds.minY), visibleCenterBounds.maxY)
+            )
+            return CropEditorHandleGeometry(
+                handle: handle,
+                center: center,
+                drawingRect: NSRect(x: center.x - handleSize / 2, y: center.y - handleSize / 2, width: handleSize, height: handleSize),
+                hitRect: NSRect(x: center.x - handleHitSize / 2, y: center.y - handleHitSize / 2, width: handleHitSize, height: handleHitSize)
+            )
+        }
+    }
+
+    private func redrawAndInvalidateInteraction() {
+        needsDisplay = true
+        window?.invalidateCursorRects(for: self)
     }
 }
 
@@ -534,7 +675,7 @@ final class CropEditorSheetController: NSViewController {
         self.sourceSize = sourceSize
         self.previewImage = previewImage
         let restoredSelection = initialSelection.flatMap { $0.restored(in: sourceSize) }
-        self.currentSelection = restoredSelection
+        self.currentSelection = restoredSelection ?? Self.originalSelection(in: sourceSize)
         self.currentOrientation = restoredSelection?.orientation ?? .horizontal
         self.resultHandler = resultHandler
         super.init(nibName: nil, bundle: nil)
@@ -596,7 +737,7 @@ final class CropEditorSheetController: NSViewController {
         rasterLabel.alignment = .center
         root.addArrangedSubview(rasterLabel)
 
-        let description = NSTextField(wrappingLabelWithString: "横向/纵向切换会保留固定比例和取景中心；固定比例可拖动内部平移，只有自由框选可拖动四角改变画幅。只裁切，不放大。")
+        let description = NSTextField(wrappingLabelWithString: "拖动画面内可平移取景；四角均可调整画幅。横向/纵向切换会保留固定比例和取景中心；固定比例保持比例，自由框选可独立调整宽高。只裁切，不放大。")
         description.font = .systemFont(ofSize: 11)
         description.textColor = .secondaryLabelColor
         description.maximumNumberOfLines = 2
@@ -638,7 +779,7 @@ final class CropEditorSheetController: NSViewController {
         guard let preset = VideoCropPreset(rawValue: sender.tag - Self.presetTagOffset) else { return }
         switch preset {
         case .original:
-            setSelection(nil)
+            setSelection(Self.originalSelection(in: sourceSize))
         case .free:
             let rect = currentSelection?.sourceRect ?? VideoCropMath.sourceBounds(for: sourceSize)
             guard let rect else { return }
@@ -660,7 +801,7 @@ final class CropEditorSheetController: NSViewController {
         }
     }
 
-    @objc private func accept(_ sender: Any?) { finish(.selected(currentSelection)) }
+    @objc private func accept(_ sender: Any?) { finish(.selected(exportSelection)) }
     @objc private func cancel(_ sender: Any?) { finish(.cancelled) }
 
     private func setSelection(_ selection: VideoCropSelection?) {
@@ -692,6 +833,21 @@ final class CropEditorSheetController: NSViewController {
         if let button = view as? NSButton { buttons.append(button) }
         for subview in view.subviews { buttons += descendantButtons(in: subview) }
         return buttons
+    }
+
+    private static func originalSelection(in sourceSize: CGSize) -> VideoCropSelection? {
+        guard let bounds = VideoCropMath.sourceBounds(for: sourceSize) else { return nil }
+        return VideoCropSelection(preset: .original, sourceRect: bounds, canvasSize: sourceSize)
+    }
+
+    private var exportSelection: VideoCropSelection? {
+        guard let selection = currentSelection else { return nil }
+        guard selection.preset == .original,
+              let bounds = VideoCropMath.sourceBounds(for: sourceSize),
+              selection.sourceRect == bounds else {
+            return selection
+        }
+        return nil
     }
 
     private func finish(_ result: CropEditorResult) {
